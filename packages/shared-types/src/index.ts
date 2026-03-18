@@ -9,3 +9,5 @@ export type TreasuryPosition = {
   durationDays: number;
   updatedAt: string;
 };
+
+export * from "./platform";
