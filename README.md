@@ -115,6 +115,66 @@ npm run dev --workspace apps/web
 - The dashboard renders both live and degraded states without blanking the page.
 - Browser demo interactions call the API gateway, not the backend workers directly, so the Windows CMD workflow remains repo-root friendly.
 
+## Feature 2 smoke / regression tests
+
+### What the smoke suite covers
+
+- Backend pytest smoke checks for `GET /threat/dashboard`, `POST /threat/analyze/transaction`, `POST /threat/analyze/market`, and `POST /threat/analyze/contract`.
+- Stable response-shape assertions for `score`, `severity`, `matched_patterns`, `recommended_action`, and dashboard anomaly metadata.
+- Explicit fallback-shape verification when the threat-engine is unavailable.
+- Frontend Playwright smoke coverage for `http://localhost:3000`, the Feature 2 dashboard section, and a no-blank-page / no-fatal-crash sanity check.
+
+### Install the smoke-test dependencies once
+
+#### Python
+
+```cmd
+python -m pip install -r requirements-local.txt
+```
+
+#### Playwright package + browser
+
+```cmd
+npm install
+npx playwright install
+```
+
+### Windows CMD: exact smoke-test commands from the repo root
+
+#### Backend Feature 2 smoke tests
+
+```cmd
+python -m pytest services\api\tests\test_feature2_smoke.py -q
+```
+
+#### Frontend Feature 2 smoke test
+
+Start the frontend first in another terminal:
+
+```cmd
+npm run dev --workspace apps/web
+```
+
+Then run:
+
+```cmd
+npx playwright test apps\web\tests\feature2-smoke.spec.ts
+```
+
+#### Full smoke suite in one repo-root command
+
+Start the frontend first in another terminal, then run:
+
+```cmd
+npm run smoke:feature2
+```
+
+### Which services must be running first?
+
+- `python -m pytest services\api\tests\test_feature2_smoke.py -q` — **no services required**. The backend smoke checks use FastAPI's in-process test client and stub the threat-engine availability states.
+- `npx playwright test apps\web\tests\feature2-smoke.spec.ts` — **requires the Next.js frontend on `http://localhost:3000`**. The page can still render fallback content if the API gateway or threat-engine are offline.
+- `npm run smoke:feature2` — **requires the Next.js frontend on `http://localhost:3000`** because the Python runner executes backend pytest first and then the Playwright smoke test.
+
 ## Feature 2: threat-engine endpoints
 
 ### Threat-engine direct endpoints
