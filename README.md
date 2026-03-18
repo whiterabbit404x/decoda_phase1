@@ -77,52 +77,77 @@ npm install --workspace apps/web
 python services\api\scripts\seed.py
 python services\risk-engine\scripts\seed.py
 python services\threat-engine\scripts\seed.py
+python services\oracle-service\scripts\seed.py
 python services\compliance-service\scripts\seed.py
 python services\reconciliation-service\scripts\seed.py
 ```
 
-### 5) Run the risk-engine
+### 5) Open seven Windows CMD terminals from the repo root and run every local service + the web app
+
+#### Terminal 1 — risk-engine
 
 ```cmd
+.venv\Scripts\activate
 python scripts\run_service.py risk-engine --reload
 ```
 
-### 6) Run the threat-engine in a second terminal
+#### Terminal 2 — threat-engine
 
 ```cmd
 .venv\Scripts\activate
 python scripts\run_service.py threat-engine --reload
 ```
 
-### 7) Run the compliance-service in a third terminal
+#### Terminal 3 — oracle-service
+
+```cmd
+.venv\Scripts\activate
+python scripts\run_service.py oracle-service --reload
+```
+
+#### Terminal 4 — compliance-service
 
 ```cmd
 .venv\Scripts\activate
 python scripts\run_service.py compliance-service --reload
 ```
 
-### 8) Run the reconciliation-service in a fourth terminal
+#### Terminal 5 — reconciliation-service
 
 ```cmd
 .venv\Scripts\activate
 python scripts\run_service.py reconciliation-service --reload
 ```
 
-### 9) Run the API gateway in a fifth terminal
+#### Terminal 6 — API gateway
 
 ```cmd
 .venv\Scripts\activate
 python scripts\run_service.py api --reload
 ```
 
-### 10) Run the frontend in a sixth terminal
+#### Terminal 7 — Next.js web app
 
 ```cmd
 .venv\Scripts\activate
 npm run dev --workspace apps/web
 ```
 
-### 11) Open the local apps
+### 6) Local ports used by the repo-root service runner
+
+These are the exact defaults used by `python scripts\run_service.py <service>` from the repo root on Windows CMD.
+
+| Service | Port | URL |
+| --- | --- | --- |
+| API gateway | `8000` | `http://localhost:8000` |
+| risk-engine | `8001` | `http://localhost:8001` |
+| threat-engine | `8002` | `http://localhost:8002` |
+| oracle-service | `8003` | `http://localhost:8003` |
+| compliance-service | `8004` | `http://localhost:8004` |
+| reconciliation-service | `8005` | `http://localhost:8005` |
+| web app | `3000` | `http://localhost:3000` |
+
+### 7) Open the local apps
 
 - API docs: `http://localhost:8000/docs`
 - Risk-engine docs: `http://localhost:8001/docs`
@@ -142,6 +167,37 @@ npm run dev --workspace apps/web
 - If any backend is unavailable or times out, the API returns explicit fallback-safe dashboard data instead of failing the UI.
 - The dashboard renders both live and degraded states without blanking the page.
 - Browser demo interactions call the API gateway, not the backend workers directly, so the Windows CMD workflow remains repo-root friendly.
+
+## Demo walkthroughs for Features 2, 3, and 4
+
+These walkthroughs assume you started the services with the exact Windows CMD commands above and that the dashboard is running at `http://localhost:3000`.
+
+### Feature 2 demo walkthrough — threat analysis
+
+1. Open `http://localhost:3000` and scroll to **Feature 2 · Preemptive Cybersecurity & AI Threat Defense**.
+2. Confirm the runtime banner says the API and backend services are online.
+3. In **Feature 2 demo interactions**, click **Flash-loan-like tx** and confirm the result returns a high score with a `block` recommendation.
+4. Click **Admin abuse tx** to inspect the privilege-abuse path and compare the explanation + matched reasons.
+5. Click **Normal market** or **Spoofing-like market** to see the market anomaly flow exercise `POST /threat/analyze/market`.
+6. Review **Active alerts** and **Recent detections** to confirm the dashboard cards match the current threat-engine feed.
+
+### Feature 3 demo walkthrough — compliance wrappers and governance
+
+1. Scroll to **Feature 3 · Sovereign-Grade Compliance & Governance**.
+2. In **Feature 3 demo interactions**, leave **Compliant transfer approved** selected and click **Run transfer screening**.
+3. Switch to **Blocked by sanctions** or **Review for incomplete KYC** and run the transfer screening again to compare deterministic wrapper reasons.
+4. In the residency section, run **Denied restricted region** to verify the geopatriation controls and routing recommendation.
+5. In the governance section, submit **Freeze wallet**, **Pause asset**, or **Allowlist wallet**.
+6. After the page refreshes, verify the new governance record appears under **Latest governance actions** and that **Asset transfer status** / policy state cards reflect the updated state.
+
+### Feature 4 demo walkthrough — reconciliation, backstops, and incidents
+
+1. Scroll to **Feature 4 · Interoperability & Systemic Resilience**.
+2. In **Feature 4 demo interactions**, run **Critical divergence** to compare expected supply vs. observed multi-ledger supply.
+3. Run **Pause bridge** in the backstop section to exercise the deterministic restricted / paused safeguards.
+4. Run **Reconciliation failure** or **Market circuit breaker** in the incident section to append a new resilience incident record.
+5. Confirm the response payloads render in the demo panel and then review **Ledger assessments**, **Backstop decision**, and **Latest incident records** for the matching dashboard state.
+6. Optionally refresh the page once more to verify the latest incident list remains visible from the local ledger.
 
 ## Feature 2 smoke / regression tests
 
@@ -498,6 +554,26 @@ The smoke checks prove that:
 - the API starts,
 - the API fetches live risk-engine and threat-engine data when available, and
 - the API returns frontend-safe fallback shapes when the backends become unavailable.
+
+## Final local verification checklist
+
+From the repo root on Windows CMD, use these exact commands to verify the polish pass locally after starting the services and web app:
+
+```cmd
+python -m pytest services\api\tests\test_feature2_smoke.py -q
+python -m pytest services\api\tests\test_feature3_smoke.py -q
+python -m pytest services\api\tests\test_feature4_smoke.py -q
+python -m pytest services\api\tests\test_risk_dashboard.py -q
+npx playwright test apps\web\tests\feature2-smoke.spec.ts
+npx playwright test apps\web\tests\feature3-smoke.spec.ts
+npx playwright test apps\web\tests\feature4-smoke.spec.ts
+```
+
+Files changed in this polish pass:
+
+- `README.md`
+- `services/api/app/main.py`
+- `apps/web/app/page.tsx`
 
 ## Optional Docker support
 

@@ -1019,7 +1019,7 @@ export default async function Page() {
           <p className="eyebrow">Phase 1 local development</p>
           <h1>Tokenized Treasury Control Dashboard</h1>
           <p className="lede">
-            The dashboard now combines the stable Phase 1 risk-engine with Feature 2 preemptive cybersecurity, Feature 3 compliance controls, and Feature 4 interoperability resilience workflows while preserving graceful fallbacks when local services are offline.
+            The dashboard now combines the stable Phase 1 risk-engine with Feature 2 preemptive cybersecurity, Feature 3 compliance controls, and Feature 4 interoperability resilience workflows while preserving clear degraded-mode handling when local services are offline.
           </p>
         </div>
         <div className="heroPanel">
@@ -1161,7 +1161,7 @@ export default async function Page() {
         <div className="sectionHeader">
           <div>
             <h2>Feature 3 · Sovereign-Grade Compliance &amp; Governance</h2>
-            <p>Deterministic transfer wrappers, geopatriation controls, and immutable-style governance actions with explainable fallback behavior.</p>
+            <p>Deterministic transfer wrappers, geopatriation controls, and immutable-style governance actions with explainable service-state handling.</p>
           </div>
           <p className="tableMeta">{complianceDashboard.message}</p>
         </div>
@@ -1406,7 +1406,7 @@ export default async function Page() {
       <section className="dashboardSection">
         <div className="sectionHeader">
           <h2>Transaction Queue</h2>
-          <p>Live evaluations from the local risk-engine, with graceful fallback records when the backend is unavailable.</p>
+          <p>Live evaluations from the local risk-engine, with graceful degraded-mode records when the backend is unavailable.</p>
           <p className="tableMeta">{riskDashboard.message}</p>
         </div>
         <div className="stack">
