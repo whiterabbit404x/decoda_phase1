@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -22,6 +23,19 @@ def run_step(command: list[str]) -> int:
     print(f"\n>>> Running: {' '.join(command)}")
     completed = subprocess.run(command, cwd=REPO_ROOT)
     return completed.returncode
+
+
+def resolve_playwright_command() -> list[str]:
+    npx_candidates = ['npx']
+    if os.name == 'nt':
+        npx_candidates = ['npx.cmd', 'npx.exe', 'npx']
+
+    for candidate in npx_candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return [resolved, 'playwright', 'test', 'apps/web/tests/feature2-smoke.spec.ts']
+
+    return [npx_candidates[0], 'playwright', 'test', 'apps/web/tests/feature2-smoke.spec.ts']
 
 
 def build_frontend_url(path: str) -> str:
@@ -87,5 +101,5 @@ if __name__ == '__main__':
 
     ensure_frontend_is_running()
 
-    frontend_rc = run_step(['npx', 'playwright', 'test', 'apps/web/tests/feature2-smoke.spec.ts'])
+    frontend_rc = run_step(resolve_playwright_command())
     raise SystemExit(frontend_rc)
