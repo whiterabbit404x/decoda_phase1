@@ -9,6 +9,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -60,10 +62,17 @@ ALLOWED_ORIGINS = [
     'http://127.0.0.1:3000',
 ]
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    seed_service(SERVICE_NAME, PORT, DETAIL, DEFAULT_METRICS)
+    yield
+
+
 app = FastAPI(
     title='api service',
     summary='Phase 1 gateway for dashboard and live risk-engine / threat-engine data.',
     description='Aggregates shared local service state, proxies dashboard feeds to the risk-engine and threat-engine, and returns explicit fallback metadata when backend services are unavailable.',
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
@@ -72,11 +81,6 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*'],
 )
-
-
-@app.on_event('startup')
-def startup() -> None:
-    seed_service(SERVICE_NAME, PORT, DETAIL, DEFAULT_METRICS)
 
 
 @app.get('/health', summary='API health check', description='Returns the API runtime mode and local persistence configuration.')
