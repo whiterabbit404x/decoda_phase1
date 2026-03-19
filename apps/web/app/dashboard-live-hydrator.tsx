@@ -9,6 +9,19 @@ type Props = {
   initialData: DashboardPageData;
 };
 
+function mergeDashboardPageData(currentData: DashboardPageData, liveData: DashboardPageData): DashboardPageData {
+  return {
+    apiUrl: liveData.apiUrl,
+    dashboard: liveData.dashboard ?? currentData.dashboard,
+    riskDashboard: liveData.riskDashboard.source === 'live' ? liveData.riskDashboard : currentData.riskDashboard,
+    threatDashboard: liveData.threatDashboard.source === 'live' ? liveData.threatDashboard : currentData.threatDashboard,
+    complianceDashboard:
+      liveData.complianceDashboard.source === 'live' ? liveData.complianceDashboard : currentData.complianceDashboard,
+    resilienceDashboard:
+      liveData.resilienceDashboard.source === 'live' ? liveData.resilienceDashboard : currentData.resilienceDashboard,
+  };
+}
+
 export default function DashboardLiveHydrator({ initialData }: Props) {
   const [data, setData] = useState(initialData);
 
@@ -18,11 +31,11 @@ export default function DashboardLiveHydrator({ initialData }: Props) {
     async function hydrateDashboard() {
       const liveData = await fetchDashboardPageData(initialData.apiUrl);
 
-      if (!active || !liveData.dashboard) {
+      if (!active) {
         return;
       }
 
-      setData(liveData);
+      setData((currentData) => mergeDashboardPageData(currentData, liveData));
     }
 
     void hydrateDashboard();
