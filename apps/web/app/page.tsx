@@ -867,6 +867,16 @@ type BackendState = 'online' | 'degraded' | 'offline';
 
 const DEFAULT_API_URL = 'http://127.0.0.1:8000';
 const DEFAULT_FETCH_TIMEOUT_MS = 5000;
+const EXPECTED_DOWNSTREAM_SERVICES = [
+  'risk-engine',
+  'threat-engine',
+  'compliance-service',
+  'reconciliation-service',
+] as const;
+
+function normalizeRuntimeStatus(value: string | undefined) {
+  return value?.trim().toLowerCase() ?? '';
+}
 
 function resolveApiUrl() {
   return (process.env.NEXT_PUBLIC_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, '');
@@ -945,11 +955,42 @@ function resolveGatewayReachability(dashboard: DashboardResponse | null) {
     return false;
   }
 
-  return (
-    dashboard.services.some((service) => service.service_name === 'api') ||
-    dashboard.cards.some((card) => card.service === 'api' || card.title === 'API Gateway') ||
-    Boolean(dashboard.mode || dashboard.database_url || typeof dashboard.redis_enabled === 'boolean')
-  );
+  const apiService = dashboard.services.find((service) => service.service_name === 'api');
+  const apiCard = dashboard.cards.find((card) => card.service === 'api' || card.title === 'API Gateway');
+
+  if (normalizeRuntimeStatus(apiService?.status) === 'ok') {
+    return true;
+  }
+
+  if (apiCard) {
+    const apiCardStatus = normalizeRuntimeStatus(apiCard.status);
+    if (!['waiting', 'down', 'offline', 'unavailable'].includes(apiCardStatus)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function resolveDashboardRegistryDegraded(dashboard: DashboardResponse | null) {
+  if (!dashboard) {
+    return false;
+  }
+
+  const serviceMap = new Map(dashboard.services.map((service) => [service.service_name, normalizeRuntimeStatus(service.status)]));
+
+  if (EXPECTED_DOWNSTREAM_SERVICES.some((serviceName) => serviceMap.get(serviceName) !== 'ok')) {
+    return true;
+  }
+
+  return dashboard.cards.some((card) => {
+    if (card.service === 'api' || card.title === 'API Gateway') {
+      return false;
+    }
+
+    const status = normalizeRuntimeStatus(card.status);
+    return ['degraded', 'down', 'waiting', 'fallback', 'offline', 'unavailable'].includes(status);
+  });
 }
 
 function resolveGatewayCard(card: DashboardCard, backendState: BackendState): DashboardCard {
@@ -1029,7 +1070,10 @@ function resolveBackendState(
   if (!resolveGatewayReachability(dashboard)) {
     return 'offline';
   }
-  if (resolveFeedState(riskDashboard, threatDashboard, complianceDashboard, resilienceDashboard)) {
+  if (
+    resolveDashboardRegistryDegraded(dashboard) ||
+    resolveFeedState(riskDashboard, threatDashboard, complianceDashboard, resilienceDashboard)
+  ) {
     return 'degraded';
   }
   return 'online';
