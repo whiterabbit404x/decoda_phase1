@@ -1156,7 +1156,7 @@ export type DashboardViewModel = {
 };
 
 export async function fetchDashboardPageData(apiUrl = resolveApiUrl()): Promise<DashboardPageData> {
-  const [dashboard, riskDashboard, threatDashboard, complianceDashboard, resilienceDashboard] = await Promise.all([
+  const [dashboardResult, riskResult, threatResult, complianceResult, resilienceResult] = await Promise.allSettled([
     getDashboard(apiUrl),
     getRiskDashboard(apiUrl),
     getThreatDashboard(apiUrl),
@@ -1164,13 +1164,23 @@ export async function fetchDashboardPageData(apiUrl = resolveApiUrl()): Promise<
     getResilienceDashboard(apiUrl),
   ]);
 
+  if (process.env.NODE_ENV === 'development') {
+    const rejectedFetches = [dashboardResult, riskResult, threatResult, complianceResult, resilienceResult].filter(
+      (result) => result.status === 'rejected'
+    );
+
+    if (rejectedFetches.length > 0) {
+      console.debug('[dashboard] Partial hydration fallback engaged for one or more endpoints.');
+    }
+  }
+
   return {
     apiUrl,
-    dashboard,
-    riskDashboard,
-    threatDashboard,
-    complianceDashboard,
-    resilienceDashboard,
+    dashboard: dashboardResult.status === 'fulfilled' ? dashboardResult.value : null,
+    riskDashboard: riskResult.status === 'fulfilled' ? riskResult.value : fallbackRiskDashboard,
+    threatDashboard: threatResult.status === 'fulfilled' ? threatResult.value : fallbackThreatDashboard,
+    complianceDashboard: complianceResult.status === 'fulfilled' ? complianceResult.value : fallbackComplianceDashboard,
+    resilienceDashboard: resilienceResult.status === 'fulfilled' ? resilienceResult.value : fallbackResilienceDashboard,
   };
 }
 
