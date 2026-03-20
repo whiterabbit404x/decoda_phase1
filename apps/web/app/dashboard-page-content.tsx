@@ -22,6 +22,15 @@ export default function DashboardPageContent({ data, gatewayReachableOverride = 
   const { backendState, cards, services, summaryCards, backendBanner } = buildDashboardViewModel(data, {
     gatewayReachableOverride,
   });
+  const coverageLabel =
+    backendState === 'online'
+      ? 'Live embedded and Railway feeds are active across risk, threat, compliance, and resilience.'
+      : backendState === 'degraded'
+        ? 'Risk, threat, compliance, and resilience remain visible even when one live service needs attention.'
+        : 'Risk, threat, compliance, and resilience remain explorable in sample mode while connectivity is restored.';
+  const dataSourceLabel = diagnostics.fallbackTriggered
+    ? `Fallback active for ${diagnostics.failedEndpoints.join(', ')}`
+    : 'All dashboard feeds are live';
 
   return (
     <main className="container">
@@ -36,12 +45,12 @@ export default function DashboardPageContent({ data, gatewayReachableOverride = 
         <div className="heroPanel">
           <p><strong>Pilot status:</strong> {backendState === 'online' ? 'Live services connected' : backendState === 'degraded' ? 'Live service degraded' : 'Sample mode active'}</p>
           <p><strong>Workspace history:</strong> Sign in to save alerts, incidents, and analysis activity to your workspace.</p>
-          <p><strong>Coverage:</strong> Risk, threat, compliance, and resilience remain visible even when one live service needs attention.</p>
+          <p><strong>Coverage:</strong> {coverageLabel}</p>
           <p><strong>Live endpoint:</strong> {apiUrl || 'Not configured'}</p>
           <p><strong>API source:</strong> {diagnostics.apiUrlSource}</p>
-          <p><strong>Data source:</strong> {diagnostics.fallbackTriggered ? `Fallback active for ${diagnostics.failedEndpoints.join(', ')}` : 'All dashboard feeds are live'}</p>
+          <p><strong>Data source:</strong> {dataSourceLabel}</p>
           <p><strong>Runtime:</strong> {diagnostics.isProduction ? 'production' : dashboard?.mode ?? 'pilot'} mode</p>
-          {diagnostics.degradedReasons.length > 0 ? <p><strong>Diagnostic:</strong> {diagnostics.degradedReasons[0]}</p> : null}
+          {backendState === 'degraded' && diagnostics.degradedReasons.length > 0 ? <p><strong>Diagnostic:</strong> {diagnostics.degradedReasons[0]}</p> : null}
         </div>
       </div>
 

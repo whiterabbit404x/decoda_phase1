@@ -111,6 +111,63 @@ test.describe('dashboard production API flow', () => {
     expect(config.diagnostic).toContain('NEXT_PUBLIC_API_URL');
   });
 
+  test('keeps the experience live when /dashboard returns an empty registry but all feature feeds are live', async () => {
+    const originalFetch = global.fetch;
+
+    global.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const pathname = new URL(url).pathname;
+
+      const payloadByPath = {
+        '/dashboard': {
+          mode: 'production',
+          database_url: 'postgres://railway',
+          redis_enabled: true,
+          cards: [],
+          services: [],
+        },
+        '/risk/dashboard': liveRiskDashboard(),
+        '/threat/dashboard': liveThreatDashboard(),
+        '/compliance/dashboard': liveComplianceDashboard(),
+        '/resilience/dashboard': liveResilienceDashboard(),
+      } satisfies Record<string, unknown>;
+
+      return new Response(JSON.stringify(payloadByPath[pathname]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof global.fetch;
+
+    try {
+      const data = await fetchDashboardPageData('https://railway.example');
+      const viewModel = buildDashboardViewModel(data);
+      const response = await getDashboardPageData(new Request('https://web.example/api/dashboard-page-data?apiUrl=https%3A%2F%2Frailway.example'));
+      const payload = (await response.json()) as {
+        meta: {
+          live: boolean;
+          experienceState: string;
+          diagnostics: {
+            experienceState: string;
+            fallbackTriggered: boolean;
+          };
+        };
+      };
+
+      expect(data.dashboard).not.toBeNull();
+      expect(data.dashboard?.cards).toEqual([]);
+      expect(data.dashboard?.services).toEqual([]);
+      expect(data.diagnostics.endpoints.dashboard.payloadState).toBe('live');
+      expect(data.diagnostics.experienceState).toBe('live');
+      expect(viewModel.backendState).toBe('online');
+      expect(viewModel.summaryCards.some((card) => card.meta.includes('Fallback coverage'))).toBe(false);
+      expect(payload.meta.live).toBe(true);
+      expect(payload.meta.experienceState).toBe('live');
+      expect(payload.meta.diagnostics.fallbackTriggered).toBe(false);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   test('reports live Railway metadata when all dashboard endpoints succeed', async () => {
     const originalFetch = global.fetch;
     const requestedUrls: string[] = [];

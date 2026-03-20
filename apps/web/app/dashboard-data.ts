@@ -924,10 +924,6 @@ export function normalizeDashboardResponse(payload: unknown): DashboardResponse 
   const cards = rawCards.map(normalizeDashboardCard).filter((card): card is DashboardCard => card !== null);
   const services = rawServices.map(normalizeServiceStatus).filter((service): service is ServiceStatus => service !== null);
 
-  if (cards.length === 0 && services.length === 0) {
-    return null;
-  }
-
   return {
     mode: typeof payload.mode === 'string' ? payload.mode : 'local',
     database_url: typeof payload.database_url === 'string' ? payload.database_url : 'sqlite:///.data/phase1.db',
@@ -1207,6 +1203,12 @@ export async function getResilienceDashboard(apiUrl = resolveApiUrl()): Promise<
   return (await fetchJson<ResilienceDashboardResponse>('/resilience/dashboard', apiUrl)) ?? fallbackResilienceDashboard;
 }
 
+function hasAllFeatureFeedsLive(endpoints: DashboardDiagnostics['endpoints']) {
+  return (['riskDashboard', 'threatDashboard', 'complianceDashboard', 'resilienceDashboard'] as const).every(
+    (key) => endpoints[key].payloadState === 'live'
+  );
+}
+
 function resolveDiagnosticsExperienceState(
   apiConfig: ApiConfig,
   endpoints: DashboardDiagnostics['endpoints']
@@ -1215,7 +1217,7 @@ function resolveDiagnosticsExperienceState(
   const hasLivePayload = payloadStates.includes('live');
   const hasFallbackPayload = payloadStates.includes('fallback');
 
-  if (payloadStates.every((state) => state === 'live')) {
+  if (hasAllFeatureFeedsLive(endpoints)) {
     return 'live';
   }
 
@@ -1420,8 +1422,8 @@ export async function fetchDashboardPageData(requestedApiUrl?: string | null): P
   const endpoints: DashboardDiagnostics['endpoints'] = {
     dashboard: {
       ...dashboardResult.meta,
-      source: dashboard ? 'live' : 'unavailable',
-      payloadState: dashboard ? 'live' : sampleMode ? 'sample' : 'unavailable',
+      source: dashboardResult.payload ? 'live' : 'unavailable',
+      payloadState: dashboardResult.payload ? 'live' : sampleMode ? 'sample' : 'unavailable',
     },
     riskDashboard: {
       ...riskResult.meta,

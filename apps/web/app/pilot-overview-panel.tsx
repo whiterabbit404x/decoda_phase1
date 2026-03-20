@@ -39,7 +39,7 @@ function formatBackendLabel(state: BackendState) {
   }
 
   if (state === 'degraded') {
-    return 'Live service degraded';
+    return 'Partial fallback coverage';
   }
 
   return 'Sample data only';
@@ -51,7 +51,7 @@ function formatBackendDetail(state: BackendState) {
   }
 
   if (state === 'degraded') {
-    return 'A live dashboard request failed, so fallback coverage is shown only for the affected sections.';
+    return 'At least one live dashboard feed needs attention, but unaffected sections remain connected to live services.';
   }
 
   return 'The pilot remains explorable with sample coverage while live connectivity is restored.';
