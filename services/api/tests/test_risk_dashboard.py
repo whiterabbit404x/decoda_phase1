@@ -53,7 +53,9 @@ class ApiRiskDashboardTests(unittest.TestCase):
         response = self.client.get('/health')
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()['service'], 'api')
+        body = response.json()
+        self.assertEqual(body['service'], 'api')
+        self.assertIn('backend_build_id', body)
 
     def test_health_details_exposes_runtime_marker_and_fixture_checks(self) -> None:
         response = self.client.get('/health/details')
@@ -66,6 +68,17 @@ class ApiRiskDashboardTests(unittest.TestCase):
         self.assertIn('files', body)
         self.assertIn('modes', body)
         self.assertIn('sample_risk_request.json', body['files']['risk_engine'])
+
+    def test_debug_fixtures_exposes_backend_build_and_fixture_paths(self) -> None:
+        response = self.client.get('/debug/fixtures')
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body['service'], 'api')
+        self.assertIn('backend_build_id', body)
+        self.assertEqual(body['backend_build_id'], api_main.BACKEND_BUILD_ID)
+        self.assertIn('sample_risk_request.json', body['files']['risk_engine'])
+        self.assertIn('critical_supply_divergence_double_count_risk.json', body['files']['reconciliation'])
 
     def test_load_json_file_returns_default_when_fixture_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

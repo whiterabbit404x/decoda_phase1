@@ -256,7 +256,8 @@ def resolve_runtime_marker() -> str:
     return f'code-sha:{sha256(Path(__file__).read_bytes()).hexdigest()[:12]}'
 
 
-RUNTIME_MARKER = resolve_runtime_marker()
+BACKEND_BUILD_ID = resolve_runtime_marker()
+RUNTIME_MARKER = BACKEND_BUILD_ID
 
 
 def mode_flags() -> dict[str, Any]:
@@ -295,7 +296,8 @@ def fixture_diagnostics() -> dict[str, Any]:
             for filename in filenames
         }
     return {
-        'version_marker': RUNTIME_MARKER,
+        'backend_build_id': BACKEND_BUILD_ID,
+        'version_marker': BACKEND_BUILD_ID,
         'directories': directories,
         'files': files,
         'modes': mode_flags(),
@@ -308,7 +310,7 @@ def emit_startup_fixture_diagnostics() -> None:
         'startup version=%s risk_dir=%s exists=%s sample_risk_request=%s '
         'reconciliation_dir=%s exists=%s critical_supply_divergence=%s '
         'critical_mismatch_paused_bridge=%s app_mode=%s pilot_mode=%s live_mode=%s demo_mode=%s',
-        diagnostics['version_marker'],
+        diagnostics['backend_build_id'],
         diagnostics['directories']['risk_engine']['path'],
         diagnostics['directories']['risk_engine']['exists'],
         diagnostics['files']['risk_engine']['sample_risk_request.json']['exists'],
@@ -360,6 +362,16 @@ def health() -> dict[str, object]:
         'reconciliation_service_url': RECONCILIATION_SERVICE_URL,
         'pilot_mode': pilot_mode(),
         'live_mode_enabled': live_mode_enabled(),
+        'backend_build_id': BACKEND_BUILD_ID,
+    }
+
+
+@app.get('/debug/fixtures', summary='Read-only fixture diagnostics', description='Returns the deployed backend build id plus resolved fixture directories and file existence flags for deploy verification.')
+def debug_fixtures() -> dict[str, Any]:
+    return {
+        'status': 'ok',
+        'service': SERVICE_NAME,
+        **fixture_diagnostics(),
     }
 
 
