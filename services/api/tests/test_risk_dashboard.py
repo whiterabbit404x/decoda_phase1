@@ -178,6 +178,30 @@ class ApiRiskDashboardTests(unittest.TestCase):
         self.assertEqual(len(body['transaction_queue']), 4)
         self.assertTrue(all(item['tx_hash'] for item in body['transaction_queue']))
 
+    def test_dashboard_registry_seeds_embedded_services_with_non_empty_cards(self) -> None:
+        response = self.client.get('/dashboard')
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        service_names = {service['service_name'] for service in body['services']}
+        self.assertTrue({'api', 'risk-engine', 'threat-engine', 'compliance-service', 'reconciliation-service'}.issubset(service_names))
+        self.assertTrue(any(card['service'] == 'risk-engine' for card in body['cards']))
+        self.assertTrue(any(card['service'] == 'threat-engine' for card in body['cards']))
+
+    def test_downstream_debug_endpoint_reports_registry_status_and_payload_truth(self) -> None:
+        self.client.get('/risk/dashboard')
+
+        response = self.client.get('/debug/downstream-status')
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn('dependencies', body)
+        risk = body['dependencies']['risk_engine']
+        self.assertEqual(risk['selected_mode'], 'embedded_local')
+        self.assertEqual(risk['registry_status'], 'ok')
+        self.assertEqual(risk['payload_source'], 'live')
+        self.assertFalse(risk['degraded'])
+
 
 class ApiThreatGatewayTests(unittest.TestCase):
     def setUp(self) -> None:

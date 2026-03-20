@@ -68,10 +68,13 @@ REPO_ROOT = _ensure_repo_root_on_path()
 from phase1_local.dev_support import (
     dashboard_payload,
     database_url,
+    load_all_services,
     load_env_file,
     load_service,
     resolve_sqlite_path,
     seed_service,
+    upsert_service,
+    replace_metrics,
 )
 
 load_env_file()
@@ -325,6 +328,141 @@ DEPENDENCY_CONFIG = {
     },
 }
 DEPENDENCY_RUNTIME_STATUS: dict[str, dict[str, Any]] = {}
+EMBEDDED_SERVICE_STATUS_DETAIL = 'Embedded local execution active'
+DEPENDENCY_SERVICE_REGISTRY = {
+    'risk_engine': {
+        'service_name': 'risk-engine',
+        'service_slug': 'risk-engine',
+        'default_port': 8001,
+    },
+    'threat_engine': {
+        'service_name': 'threat-engine',
+        'service_slug': 'threat-engine',
+        'default_port': 8002,
+    },
+    'compliance_service': {
+        'service_name': 'compliance-service',
+        'service_slug': 'compliance-service',
+        'default_port': 8004,
+    },
+    'reconciliation_service': {
+        'service_name': 'reconciliation-service',
+        'service_slug': 'reconciliation-service',
+        'default_port': 8005,
+    },
+}
+
+
+def resolve_service_port(url: str, default_port: int) -> int:
+    parsed = urlparse(url)
+    if parsed.port is not None:
+        return parsed.port
+    if parsed.scheme == 'https':
+        return 443
+    if parsed.scheme == 'http':
+        return 80
+    return default_port
+
+
+def dependency_service_name(dependency_name: str) -> str:
+    return str(DEPENDENCY_SERVICE_REGISTRY[dependency_name]['service_name'])
+
+
+def registry_metrics_for_dependency(dependency_name: str) -> list[dict[str, str]]:
+    runtime = DEPENDENCY_RUNTIME_STATUS.get(dependency_name, {})
+    selected_mode = str(runtime.get('selected_mode') or dependency_mode(dependency_name))
+    last_used_mode = str(runtime.get('last_used_mode') or selected_mode)
+    payload_source = str(runtime.get('payload_source') or ('live' if selected_mode == 'embedded_local' else 'unavailable'))
+    degraded = bool(runtime.get('degraded', False))
+    last_error = runtime.get('last_error')
+    configured_url = str(runtime.get('configured_url') or globals()[DEPENDENCY_CONFIG[dependency_name]['url_key']])
+    return [
+        {
+            'metric_key': 'execution_mode',
+            'label': 'Execution mode',
+            'value': 'Embedded local execution active' if selected_mode == 'embedded_local' else f'Remote proxy to {configured_url}',
+            'status': 'Live' if payload_source == 'live' and not degraded else 'Monitoring',
+        },
+        {
+            'metric_key': 'payload_source',
+            'label': 'Payload source',
+            'value': payload_source,
+            'status': 'Live' if payload_source == 'live' and not degraded else 'Fallback' if payload_source == 'fallback' or degraded else 'Pending',
+        },
+        {
+            'metric_key': 'runtime_status',
+            'label': 'Runtime status',
+            'value': f'last_used_mode={last_used_mode}' + (f'; last_error={last_error}' if last_error else ''),
+            'status': 'Healthy' if not degraded else 'Degraded',
+        },
+    ]
+
+
+def update_dependency_registry_entry(
+    dependency_name: str,
+    *,
+    payload_source: str | None = None,
+    degraded: bool | None = None,
+    detail: str | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    registry_config = DEPENDENCY_SERVICE_REGISTRY[dependency_name]
+    runtime = DEPENDENCY_RUNTIME_STATUS.setdefault(dependency_name, {})
+    selected_mode = dependency_mode(dependency_name)
+    last_used_mode = str(runtime.get('last_used_mode') or selected_mode)
+    payload_source_value = payload_source or str(runtime.get('payload_source') or ('live' if selected_mode == 'embedded_local' else 'unavailable'))
+    degraded_value = bool(runtime.get('degraded', False) if degraded is None else degraded)
+    detail_value = detail or (EMBEDDED_SERVICE_STATUS_DETAIL if selected_mode == 'embedded_local' else 'Remote proxy configured')
+    if error is not None:
+        runtime['last_error'] = error
+    configured_url = globals()[DEPENDENCY_CONFIG[dependency_name]['url_key']]
+    runtime.update(
+        {
+            'configured_url': configured_url,
+            'selected_mode': selected_mode,
+            'last_used_mode': last_used_mode,
+            'payload_source': payload_source_value,
+            'degraded': degraded_value,
+            'detail': detail_value,
+        }
+    )
+    service_name = str(registry_config['service_name'])
+    status = 'ok' if selected_mode == 'embedded_local' and not degraded_value else 'degraded' if degraded_value else 'ok'
+    upsert_service(
+        service_name,
+        resolve_service_port(str(configured_url), int(registry_config['default_port'])),
+        status,
+        detail_value,
+    )
+    replace_metrics(service_name, registry_metrics_for_dependency(dependency_name))
+    return load_service(service_name) or {
+        'service_name': service_name,
+        'status': status,
+        'detail': detail_value,
+    }
+
+
+def seed_embedded_dependency_registry() -> None:
+    for dependency_name in DEPENDENCY_SERVICE_REGISTRY:
+        update_dependency_registry_entry(dependency_name)
+
+
+def dependency_debug_snapshot() -> dict[str, Any]:
+    registry_services = {service['service_name']: service for service in load_all_services()}
+    snapshot: dict[str, Any] = {}
+    for dependency_name in DEPENDENCY_SERVICE_REGISTRY:
+        runtime = DEPENDENCY_RUNTIME_STATUS.get(dependency_name, {})
+        service_name = dependency_service_name(dependency_name)
+        snapshot[dependency_name] = {
+            'selected_mode': runtime.get('selected_mode', dependency_mode(dependency_name)),
+            'last_used_mode': runtime.get('last_used_mode', dependency_mode(dependency_name)),
+            'last_error': runtime.get('last_error'),
+            'registry_status': registry_services.get(service_name, {}).get('status'),
+            'registry_detail': registry_services.get(service_name, {}).get('detail'),
+            'payload_source': runtime.get('payload_source'),
+            'degraded': runtime.get('degraded'),
+        }
+    return snapshot
 
 
 def is_remote_service_url(configured_url: str | None) -> bool:
@@ -382,7 +520,15 @@ def dependency_mode(dependency_name: str) -> str:
     return 'remote_proxy' if is_remote_service_url(env_value) else 'embedded_local'
 
 
-def record_dependency_runtime(dependency_name: str, mode: str, error: str | None = None) -> None:
+def record_dependency_runtime(
+    dependency_name: str,
+    mode: str,
+    error: str | None = None,
+    *,
+    payload_source: str | None = None,
+    degraded: bool | None = None,
+    detail: str | None = None,
+) -> None:
     status = DEPENDENCY_RUNTIME_STATUS.setdefault(dependency_name, {})
     status.update(
         {
@@ -392,10 +538,24 @@ def record_dependency_runtime(dependency_name: str, mode: str, error: str | None
             'last_error': error,
         }
     )
+    if payload_source is not None:
+        status['payload_source'] = payload_source
+    if degraded is not None:
+        status['degraded'] = degraded
+    if detail is not None:
+        status['detail'] = detail
+    update_dependency_registry_entry(
+        dependency_name,
+        payload_source=payload_source,
+        degraded=degraded,
+        detail=detail,
+        error=error,
+    )
 
 
 def dependency_diagnostics() -> dict[str, Any]:
     diagnostics: dict[str, Any] = {}
+    registry_snapshot = dependency_debug_snapshot()
     for dependency_name, config in DEPENDENCY_CONFIG.items():
         existing = DEPENDENCY_RUNTIME_STATUS.get(dependency_name, {})
         diagnostics[dependency_name] = {
@@ -404,6 +564,9 @@ def dependency_diagnostics() -> dict[str, Any]:
             'selected_mode': dependency_mode(dependency_name),
             'last_used_mode': existing.get('last_used_mode', dependency_mode(dependency_name)),
             'last_error': existing.get('last_error'),
+            'registry_status': registry_snapshot[dependency_name]['registry_status'],
+            'payload_source': existing.get('payload_source'),
+            'degraded': existing.get('degraded'),
         }
     return diagnostics
 
@@ -469,6 +632,7 @@ def emit_startup_fixture_diagnostics() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     seed_service(SERVICE_NAME, PORT, DETAIL, DEFAULT_METRICS)
+    seed_embedded_dependency_registry()
     emit_startup_fixture_diagnostics()
     yield
 
@@ -518,6 +682,16 @@ def debug_fixtures() -> dict[str, Any]:
     }
 
 
+@app.get('/debug/downstream-status', summary='Downstream dependency diagnostics', description='Returns dependency mode, registry state, and payload truth for each embedded or proxied downstream service.')
+def debug_downstream_status() -> dict[str, Any]:
+    seed_embedded_dependency_registry()
+    return {
+        'status': 'ok',
+        'service': SERVICE_NAME,
+        'dependencies': dependency_debug_snapshot(),
+    }
+
+
 @app.get('/health/details', summary='Deployment verification details', description='Returns a safe runtime marker plus resolved fixture paths and mode flags for deploy verification.')
 def health_details() -> dict[str, Any]:
     return {
@@ -537,6 +711,8 @@ def state() -> dict[str, object]:
 
 @app.get('/services', summary='List registered local services', description='Returns the shared local service registry used to populate the dashboard status cards.')
 def services() -> dict[str, object]:
+    seed_service(SERVICE_NAME, PORT, DETAIL, DEFAULT_METRICS)
+    seed_embedded_dependency_registry()
     payload = dashboard_payload()
     return {
         'mode': payload['mode'],
@@ -547,6 +723,8 @@ def services() -> dict[str, object]:
 
 @app.get('/dashboard', summary='Dashboard service snapshot', description='Returns the local dashboard summary cards and service registry information for the frontend.')
 def dashboard() -> dict[str, object]:
+    seed_service(SERVICE_NAME, PORT, DETAIL, DEFAULT_METRICS)
+    seed_embedded_dependency_registry()
     return dashboard_payload()
 
 
@@ -555,10 +733,19 @@ def risk_dashboard() -> dict[str, object]:
     queue = build_risk_dashboard_queue()
     live_count = sum(1 for item in queue if item['live_data'])
     degraded = live_count != len(queue)
-    return {
+    message = 'Live risk-engine data loaded successfully.' if not degraded else 'Risk-engine unavailable or timed out for one or more queue items. Returning fallback-safe dashboard records.'
+    record_dependency_runtime(
+        'risk_engine',
+        dependency_mode('risk_engine') if not degraded else 'fallback',
+        None if not degraded else 'One or more embedded or proxied risk evaluations failed.',
+        payload_source='live' if not degraded else 'fallback',
+        degraded=degraded,
+        detail=EMBEDDED_SERVICE_STATUS_DETAIL if not degraded and dependency_mode('risk_engine') == 'embedded_local' else message,
+    )
+    payload = {
         'source': 'live' if not degraded else 'fallback',
         'degraded': degraded,
-        'message': 'Live risk-engine data loaded successfully.' if not degraded else 'Risk-engine unavailable or timed out for one or more queue items. Returning fallback-safe dashboard records.',
+        'message': message,
         'risk_engine': {
             'url': RISK_ENGINE_URL,
             'timeout_seconds': RISK_ENGINE_TIMEOUT_SECONDS,
@@ -573,12 +760,16 @@ def risk_dashboard() -> dict[str, object]:
         'contract_scan_results': build_contract_scan_results(queue),
         'decisions_log': build_decisions_log(queue),
     }
+    return attach_dependency_diagnostics(payload, 'risk_engine', fallback_reason=None if not degraded else 'One or more risk queue evaluations used fallback data.')
 
 
 @app.get('/threat/dashboard', summary='Feature 2 threat dashboard feed', description='Returns the threat-engine dashboard payload when available and explicit fallback demo data when the threat-engine is unavailable.')
 def threat_dashboard() -> dict[str, Any]:
     payload = fetch_threat_dashboard()
-    return payload or fallback_threat_dashboard()
+    if payload is not None:
+        return payload
+    record_dependency_runtime('threat_engine', 'fallback', 'Threat dashboard request failed; serving fallback dashboard.', payload_source='fallback', degraded=True, detail='Threat dashboard fallback active')
+    return attach_dependency_diagnostics(fallback_threat_dashboard(), 'threat_engine', fallback_reason='Threat dashboard fell back after embedded or remote execution failed.')
 
 
 @app.post('/threat/analyze/contract', summary='Feature 2 contract analysis', description='Proxies a contract analysis request to the threat-engine and falls back to a conservative local rule summary if the engine is unavailable.')
@@ -602,7 +793,10 @@ def threat_analyze_market(payload: dict[str, Any]) -> dict[str, Any]:
 @app.get('/compliance/dashboard', summary='Feature 3 compliance dashboard feed', description='Returns the compliance-service dashboard payload when available and explicit fallback demo data when the compliance service is unavailable.')
 def compliance_dashboard() -> dict[str, Any]:
     payload = fetch_compliance_dashboard()
-    return payload or fallback_compliance_dashboard()
+    if payload is not None:
+        return payload
+    record_dependency_runtime('compliance_service', 'fallback', 'Compliance dashboard request failed; serving fallback dashboard.', payload_source='fallback', degraded=True, detail='Compliance dashboard fallback active')
+    return attach_dependency_diagnostics(fallback_compliance_dashboard(), 'compliance_service', fallback_reason='Compliance dashboard fell back after embedded or remote execution failed.')
 
 
 @app.post('/compliance/screen/transfer', summary='Feature 3 transfer compliance screening', description='Proxies a transfer screening request to the compliance service and falls back to a conservative deterministic local decision if the service is unavailable.')
@@ -649,7 +843,10 @@ def compliance_create_governance_action(payload: dict[str, Any]) -> dict[str, An
 @app.get('/resilience/dashboard', summary='Feature 4 resilience dashboard feed', description='Returns the reconciliation-service dashboard payload when available and explicit fallback resilience data when the service is unavailable.')
 def resilience_dashboard() -> dict[str, Any]:
     payload = fetch_resilience_dashboard()
-    return payload or fallback_resilience_dashboard()
+    if payload is not None:
+        return payload
+    record_dependency_runtime('reconciliation_service', 'fallback', 'Resilience dashboard request failed; serving fallback dashboard.', payload_source='fallback', degraded=True, detail='Resilience dashboard fallback active')
+    return attach_dependency_diagnostics(fallback_resilience_dashboard(), 'reconciliation_service', fallback_reason='Resilience dashboard fell back after embedded or remote execution failed.')
 
 
 @app.post('/resilience/reconcile/state', summary='Feature 4 cross-chain reconciliation', description='Proxies a reconciliation request to the reconciliation-service and falls back to a deterministic local reconciliation summary if the service is unavailable.')
@@ -1143,13 +1340,35 @@ def build_mixer_request(sample_request: dict[str, Any], suspicious_events: list[
     return request
 
 
+def attach_dependency_diagnostics(payload: dict[str, Any], dependency_name: str, *, fallback_reason: str | None = None) -> dict[str, Any]:
+    runtime = DEPENDENCY_RUNTIME_STATUS.get(dependency_name, {})
+    payload['diagnostics'] = {
+        'dependency': dependency_service_name(dependency_name),
+        'selected_mode': runtime.get('selected_mode', dependency_mode(dependency_name)),
+        'last_used_mode': runtime.get('last_used_mode', dependency_mode(dependency_name)),
+        'last_error': runtime.get('last_error'),
+        'registry_status': load_service(dependency_service_name(dependency_name)),
+        'payload_source': payload.get('source'),
+        'degraded': payload.get('degraded'),
+        'fallback_reason': fallback_reason,
+    }
+    return payload
+
+
 def mark_live_payload(payload: dict[str, Any], dependency_name: str) -> dict[str, Any]:
     payload['source'] = 'live'
     payload['degraded'] = False
     payload.setdefault('metadata', {})
     if isinstance(payload['metadata'], dict):
         payload['metadata'].setdefault('dependency_mode', dependency_mode(dependency_name))
-    return payload
+    record_dependency_runtime(
+        dependency_name,
+        dependency_mode(dependency_name),
+        payload_source='live',
+        degraded=False,
+        detail=EMBEDDED_SERVICE_STATUS_DETAIL if dependency_mode(dependency_name) == 'embedded_local' else 'Remote proxy responding normally',
+    )
+    return attach_dependency_diagnostics(payload, dependency_name)
 
 
 def evaluate_live_risk(payload: dict[str, Any]) -> dict[str, Any] | None:
