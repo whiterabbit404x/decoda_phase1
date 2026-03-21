@@ -1,4 +1,5 @@
 import {
+  buildThreatDashboardRuntimeDiagnostics,
   fetchDashboardPageData,
   resolveGatewayReachability,
 } from '../../dashboard-data';
@@ -19,6 +20,7 @@ export async function GET(request: Request): Promise<Response> {
     resilienceLive: data.resilienceDashboard.source === 'live' && !data.resilienceDashboard.degraded,
     live: data.diagnostics.experienceState === 'live',
     diagnostics: data.diagnostics,
+    threatDiagnostics: buildThreatDashboardRuntimeDiagnostics(data),
     experienceState: data.diagnostics.experienceState,
     sampleMode: data.diagnostics.sampleMode,
     errors: data.diagnostics.degradedReasons,

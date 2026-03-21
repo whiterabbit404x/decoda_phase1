@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 
 import DashboardPageContent from './dashboard-page-content';
-import { DashboardPageData, DashboardResponse } from './dashboard-data';
+import { DashboardDiagnostics, DashboardEndpointKey, DashboardPageData, DashboardResponse, mergeDashboardDiagnostics } from './dashboard-data';
 
 type Props = {
   initialData: DashboardPageData;
@@ -120,6 +120,40 @@ function mergeDashboardPageData(current: DashboardPageData, updates: LiveSection
   };
 }
 
+function collectUpdatedEndpointKeys(updates: LiveSectionUpdates): DashboardEndpointKey[] {
+  const keys: DashboardEndpointKey[] = [];
+
+  if (updates.dashboard) {
+    keys.push('dashboard');
+  }
+
+  if (updates.riskDashboard) {
+    keys.push('riskDashboard');
+  }
+
+  if (updates.threatDashboard) {
+    keys.push('threatDashboard');
+  }
+
+  if (updates.complianceDashboard) {
+    keys.push('complianceDashboard');
+  }
+
+  if (updates.resilienceDashboard) {
+    keys.push('resilienceDashboard');
+  }
+
+  return keys;
+}
+
+function mergeHydratedDiagnostics(
+  current: DashboardDiagnostics,
+  next: DashboardDiagnostics,
+  updates: LiveSectionUpdates
+) {
+  return mergeDashboardDiagnostics(current, next, collectUpdatedEndpointKeys(updates));
+}
+
 function hasAnyLiveSection(meta: DashboardPageDataHydrationMeta) {
   return meta.riskLive || meta.threatLive || meta.complianceLive || meta.resilienceLive;
 }
@@ -155,7 +189,10 @@ export default function DashboardLiveHydrator({ initialData }: Props) {
         const routeUpdates = collectLiveSectionUpdates(hydrationResult.data);
 
         if (hasLiveSectionUpdates(routeUpdates)) {
-          setData((current) => mergeDashboardPageData(current, routeUpdates));
+          setData((current) => ({
+            ...mergeDashboardPageData(current, routeUpdates),
+            diagnostics: mergeHydratedDiagnostics(current.diagnostics, hydrationResult.data.diagnostics, routeUpdates),
+          }));
         }
 
         if (hydrationResult.meta.gatewayReachable) {

@@ -1300,6 +1300,31 @@ function buildDashboardDiagnostics(
   };
 }
 
+export function mergeDashboardDiagnostics(
+  current: DashboardDiagnostics,
+  next: DashboardDiagnostics,
+  keys: DashboardEndpointKey[]
+): DashboardDiagnostics {
+  if (keys.length === 0) {
+    return current;
+  }
+
+  const endpoints = {
+    ...current.endpoints,
+    ...Object.fromEntries(keys.map((key) => [key, next.endpoints[key]])),
+  } as DashboardDiagnostics['endpoints'];
+
+  return buildDashboardDiagnostics(
+    {
+      apiUrl: next.apiUrl,
+      source: next.apiUrlSource,
+      isProduction: next.isProduction,
+      diagnostic: next.resolutionMessage,
+    },
+    endpoints
+  );
+}
+
 export function statusTone(status: string) {
   const value = status.toLowerCase();
   if (value === 'approved' || value === 'allowed' || value === 'active') {
@@ -1379,6 +1404,14 @@ export type DashboardPageData = {
   diagnostics: DashboardDiagnostics;
 };
 
+export type ThreatDashboardRuntimeDiagnostics = {
+  source: ThreatDashboardResponse['source'];
+  degraded: boolean;
+  message: string;
+  firstAlertSource: ThreatDetection['source'] | 'none';
+  endpoint: DashboardEndpointMeta;
+};
+
 export type DashboardViewModel = {
   backendState: BackendState;
   cards: DashboardCard[];
@@ -1390,6 +1423,29 @@ export type DashboardViewModel = {
 export type DashboardViewModelOptions = {
   gatewayReachableOverride?: boolean;
 };
+
+export function buildThreatDashboardRuntimeDiagnostics(
+  data: Pick<DashboardPageData, 'threatDashboard' | 'diagnostics'>
+): ThreatDashboardRuntimeDiagnostics {
+  return {
+    source: data.threatDashboard.source,
+    degraded: data.threatDashboard.degraded,
+    message: data.threatDashboard.message,
+    firstAlertSource: data.threatDashboard.active_alerts[0]?.source ?? 'none',
+    endpoint: data.diagnostics.endpoints.threatDashboard,
+  };
+}
+
+export function isThreatDashboardLive(payload: Pick<ThreatDashboardResponse, 'source' | 'degraded'>) {
+  return payload.source === 'live' && !payload.degraded;
+}
+
+export function shouldRenderThreatAlertSourceChip(
+  threatDashboard: Pick<ThreatDashboardResponse, 'source' | 'degraded'>,
+  alert: Pick<ThreatDetection, 'source'>
+) {
+  return !isThreatDashboardLive(threatDashboard) || alert.source !== 'live';
+}
 
 export function formatSourceLabel(payloadState: DashboardPayloadState) {
   if (payloadState === 'live') {

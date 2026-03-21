@@ -9,6 +9,7 @@ import {
   fallbackThreatDashboard,
   fetchDashboardPageData,
   formatSourceLabel,
+  shouldRenderThreatAlertSourceChip,
 } from '../app/dashboard-data';
 import { GET as getDashboardPageData } from '../app/api/dashboard-page-data/route';
 
@@ -306,6 +307,20 @@ test.describe('dashboard production API flow', () => {
     try {
       const data = await fetchDashboardPageData('https://railway.example');
       const viewModel = buildDashboardViewModel(data);
+      const response = await getDashboardPageData(new Request('https://web.example/api/dashboard-page-data?apiUrl=https%3A%2F%2Frailway.example'));
+      const routePayload = (await response.json()) as {
+        meta: {
+          threatDiagnostics: {
+            source: string;
+            degraded: boolean;
+            firstAlertSource: string;
+            endpoint: {
+              path: string;
+              payloadState: string;
+            };
+          };
+        };
+      };
 
       expect(data.diagnostics.endpoints.threatDashboard.transport).toBe('ok');
       expect(data.diagnostics.endpoints.threatDashboard.payloadState).toBe('fallback');
@@ -315,6 +330,15 @@ test.describe('dashboard production API flow', () => {
       expect(data.threatDashboard.message).toContain('Threat fallback payload from gateway.');
       expect(viewModel.summaryCards.some((card) => card.meta.includes('Sample coverage'))).toBe(false);
       expect(formatSourceLabel(data.diagnostics.endpoints.threatDashboard.payloadState)).toBe('Fallback coverage');
+      expect(routePayload.meta.threatDiagnostics).toEqual(expect.objectContaining({
+        source: 'fallback',
+        degraded: true,
+        firstAlertSource: 'live',
+        endpoint: expect.objectContaining({
+          path: '/threat/dashboard',
+          payloadState: 'fallback',
+        }),
+      }));
     } finally {
       global.fetch = originalFetch;
     }
@@ -350,6 +374,21 @@ test.describe('dashboard production API flow', () => {
     try {
       const data = await fetchDashboardPageData('https://railway.example');
       const viewModel = buildDashboardViewModel(data);
+      const response = await getDashboardPageData(new Request('https://web.example/api/dashboard-page-data?apiUrl=https%3A%2F%2Frailway.example'));
+      const routePayload = (await response.json()) as {
+        meta: {
+          threatDiagnostics: {
+            source: string;
+            degraded: boolean;
+            message: string;
+            firstAlertSource: string;
+            endpoint: {
+              path: string;
+              payloadState: string;
+            };
+          };
+        };
+      };
 
       expect(data.threatDashboard.source).toBe('live');
       expect(data.threatDashboard.degraded).toBe(false);
@@ -360,6 +399,90 @@ test.describe('dashboard production API flow', () => {
       expect(data.diagnostics.endpoints.threatDashboard.payloadState).toBe('live');
       expect(viewModel.backendState).toBe('online');
       expect(viewModel.summaryCards.find((card) => card.label === 'Threat posture')?.meta).toContain('Live feed');
+      expect(routePayload.meta.threatDiagnostics).toEqual({
+        source: 'live',
+        degraded: false,
+        message: 'Threat dashboard is driven by deterministic weighted rules so each score remains explainable and demoable.',
+        firstAlertSource: 'live',
+        endpoint: expect.objectContaining({
+          path: '/threat/dashboard',
+          payloadState: 'live',
+        }),
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  test('treats live Feature 2 payloads as live rendering mode without fallback alert chips', async () => {
+    const originalFetch = global.fetch;
+
+    global.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const pathname = new URL(url).pathname;
+
+      const staleLiveThreatPayload = {
+        ...clone(fallbackThreatDashboard),
+        source: 'live',
+        degraded: false,
+      };
+
+      const payloadByPath = {
+        '/dashboard': dashboardPayload,
+        '/risk/dashboard': liveRiskDashboard(),
+        '/threat/dashboard': staleLiveThreatPayload,
+        '/compliance/dashboard': liveComplianceDashboard(),
+        '/resilience/dashboard': liveResilienceDashboard(),
+      } satisfies Record<string, unknown>;
+
+      return new Response(JSON.stringify(payloadByPath[pathname]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof global.fetch;
+
+    try {
+      const data = await fetchDashboardPageData('https://railway.example');
+
+      expect(data.threatDashboard.message).not.toContain('Threat-engine unavailable or timed out');
+      expect(data.threatDashboard.cards.some((card) => card.detail.includes('Fallback contract threat score'))).toBe(false);
+      expect(data.threatDashboard.active_alerts.every((alert) => !shouldRenderThreatAlertSourceChip(data.threatDashboard, alert))).toBe(true);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  test('treats true fallback Feature 2 payloads as fallback rendering mode with fallback alert chips', async () => {
+    const originalFetch = global.fetch;
+
+    global.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const pathname = new URL(url).pathname;
+
+      const payloadByPath = {
+        '/dashboard': dashboardPayload,
+        '/risk/dashboard': liveRiskDashboard(),
+        '/threat/dashboard': clone(fallbackThreatDashboard),
+        '/compliance/dashboard': liveComplianceDashboard(),
+        '/resilience/dashboard': liveResilienceDashboard(),
+      } satisfies Record<string, unknown>;
+
+      return new Response(JSON.stringify(payloadByPath[pathname]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof global.fetch;
+
+    try {
+      const data = await fetchDashboardPageData('https://railway.example');
+
+      expect(data.threatDashboard.source).toBe('fallback');
+      expect(data.threatDashboard.degraded).toBe(true);
+      expect(data.threatDashboard.cards.some((card) => card.detail.includes('Fallback contract threat score'))).toBe(true);
+      expect(data.threatDashboard.message).toContain('Threat-engine unavailable or timed out');
+      expect(data.threatDashboard.active_alerts.some((alert) => shouldRenderThreatAlertSourceChip(data.threatDashboard, alert) && alert.source === 'fallback')).toBe(true);
+      expect(data.diagnostics.endpoints.threatDashboard.path).toBe('/threat/dashboard');
+      expect(formatSourceLabel(data.diagnostics.endpoints.threatDashboard.payloadState)).toBe('Fallback coverage');
     } finally {
       global.fetch = originalFetch;
     }
