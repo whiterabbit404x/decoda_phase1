@@ -5,10 +5,12 @@ import PilotOverviewPanel from './pilot-overview-panel';
 import ResilienceDemoPanel from './resilience-demo-panel';
 import ThreatDemoPanel from './threat-demo-panel';
 import {
+  buildThreatDashboardRuntimeDiagnostics,
   buildDashboardViewModel,
   DashboardPageData,
   formatAddress,
   formatRules,
+  shouldRenderThreatAlertSourceChip,
   statusTone,
 } from './dashboard-data';
 
@@ -22,6 +24,7 @@ export default function DashboardPageContent({ data, gatewayReachableOverride = 
   const { backendState, cards, services, summaryCards, backendBanner } = buildDashboardViewModel(data, {
     gatewayReachableOverride,
   });
+  const threatRuntimeDiagnostics = buildThreatDashboardRuntimeDiagnostics(data);
   const coverageLabel =
     backendState === 'online'
       ? 'Live embedded and Railway feeds are active across risk, threat, compliance, and resilience.'
@@ -109,6 +112,22 @@ export default function DashboardPageContent({ data, gatewayReachableOverride = 
           ))}
         </div>
 
+        <article className="dataCard">
+          <div className="sectionHeader compact">
+            <h3>Feature 2 diagnostics</h3>
+            <p>Temporary truth trace for the live vs fallback threat feed.</p>
+          </div>
+          <div className="kvGrid compactKvGrid">
+            <p><span>threatDashboard.source</span>{threatRuntimeDiagnostics.source}</p>
+            <p><span>threatDashboard.degraded</span>{String(threatRuntimeDiagnostics.degraded)}</p>
+            <p><span>first alert source</span>{threatRuntimeDiagnostics.firstAlertSource}</p>
+            <p><span>endpoint</span>{threatRuntimeDiagnostics.endpoint.path}</p>
+            <p><span>endpoint payloadState</span>{threatRuntimeDiagnostics.endpoint.payloadState}</p>
+            <p><span>endpoint usedFallback</span>{String(threatRuntimeDiagnostics.endpoint.usedFallback)}</p>
+          </div>
+          <p className="explanation small"><strong>threatDashboard.message:</strong> {threatRuntimeDiagnostics.message}</p>
+        </article>
+
         <div className="threeColumnSection">
           <div className="stack compactStack">
             <div className="sectionHeader compact">
@@ -129,7 +148,7 @@ export default function DashboardPageContent({ data, gatewayReachableOverride = 
                 </div>
                 <div className="chipRow">
                   <span className={`severityPill ${alert.severity}`}>{alert.severity}</span>
-                  <span className="ruleChip">{alert.source}</span>
+                  {shouldRenderThreatAlertSourceChip(threatDashboard, alert) ? <span className="ruleChip">{alert.source}</span> : null}
                 </div>
                 <p className="explanation small">{alert.explanation}</p>
                 <div className="chipRow">
