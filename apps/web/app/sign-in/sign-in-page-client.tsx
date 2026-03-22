@@ -4,16 +4,17 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
-import AuthDiagnosticCard from '../auth-diagnostic-card';
+import AuthPageShell from '../auth-page-shell';
+import type { BuildInfo } from '../build-info';
 import { resolveAuthFormState } from '../auth-form-state';
 import { usePilotAuth } from '../pilot-auth-context';
 
 export default function SignInPageClient({
   nextPath,
-  previewNotice,
+  initialBuildInfo,
 }: {
   nextPath?: string;
-  previewNotice?: React.ReactNode;
+  initialBuildInfo: BuildInfo;
 }) {
   const router = useRouter();
   const {
@@ -56,31 +57,27 @@ export default function SignInPageClient({
   }
 
   return (
-    <main className="container authPage">
-      <div className="hero">
-        <div>
-          <p className="eyebrow">Pilot access</p>
-          <h1>Sign in to your workspace</h1>
-          <p className="lede">Open your live pilot workspace, save operating history, and keep your team on the same company view.</p>
-        </div>
-      </div>
-      {formState.statusMessage ? <p className="statusLine">{formState.statusMessage}</p> : null}
-      {formState.deploymentWarning ? <p className="statusLine">{formState.deploymentWarning}</p> : null}
-      {nextPath ? <p className="muted">Sign in to continue to {nextPath}.</p> : null}
-      {previewNotice}
-      <div className="twoColumnSection authPageGrid">
-        <form className="dataCard authForm" onSubmit={handleSubmit}>
-          <label className="label">Email</label>
-          <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
-          <label className="label">Password</label>
-          <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required />
-          <button type="submit" disabled={formState.submitDisabled}>{loading ? 'Signing in…' : 'Sign in'}</button>
-          {error ? <p className="statusLine">{error}</p> : null}
-          {!configLoading && !configured ? <p className="statusLine">Auth is disabled until this deployment exposes a valid API_URL.</p> : null}
-          <p className="muted">Need an account? <Link href="/sign-up">Create one</Link>.</p>
-        </form>
-        <AuthDiagnosticCard loading={configLoading} runtimeConfig={runtimeConfig} />
-      </div>
-    </main>
+    <AuthPageShell
+      eyebrow="Pilot access"
+      title="Sign in to your workspace"
+      lede="Open your live pilot workspace, save operating history, and keep your team on the same company view."
+      statusMessage={formState.statusMessage}
+      deploymentWarning={formState.deploymentWarning}
+      afterWarnings={nextPath ? <p className="muted">Sign in to continue to {nextPath}.</p> : null}
+      runtimeConfig={runtimeConfig}
+      configLoading={configLoading}
+      initialBuildInfo={initialBuildInfo}
+    >
+      <form className="dataCard authForm" onSubmit={handleSubmit}>
+        <label className="label">Email</label>
+        <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
+        <label className="label">Password</label>
+        <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required />
+        <button type="submit" disabled={formState.submitDisabled}>{loading ? 'Signing in…' : 'Sign in'}</button>
+        {error ? <p className="statusLine">{error}</p> : null}
+        {!configLoading && !configured ? <p className="statusLine">Auth is disabled until this deployment exposes a valid API_URL.</p> : null}
+        <p className="muted">Need an account? <Link href="/sign-up">Create one</Link>.</p>
+      </form>
+    </AuthPageShell>
   );
 }

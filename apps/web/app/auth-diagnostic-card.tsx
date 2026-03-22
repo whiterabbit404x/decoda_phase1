@@ -1,8 +1,12 @@
+import AuthBuildBadge from './auth-build-badge';
+import type { BuildInfo } from './build-info';
 import { formatRuntimeConfigSource, RuntimeConfig } from './runtime-config-schema';
 
 type AuthDiagnosticCardProps = {
   runtimeConfig: RuntimeConfig;
+  buildInfo: BuildInfo | null;
   loading?: boolean;
+  buildInfoLoading?: boolean;
 };
 
 function envValue(value: string | number | boolean | null | undefined) {
@@ -17,29 +21,31 @@ function envValue(value: string | number | boolean | null | undefined) {
   return value && String(value).trim() ? String(value) : 'unset';
 }
 
-export default function AuthDiagnosticCard({ runtimeConfig, loading = false }: AuthDiagnosticCardProps) {
+export default function AuthDiagnosticCard({
+  runtimeConfig,
+  buildInfo,
+  loading = false,
+  buildInfoLoading = false,
+}: AuthDiagnosticCardProps) {
   const healthUrl = runtimeConfig.apiUrl ? `${runtimeConfig.apiUrl}/health` : null;
 
   return (
     <article className="dataCard authDiagnosticCard">
+      <AuthBuildBadge buildInfo={buildInfo} loading={buildInfoLoading} compact />
       <p className="sectionEyebrow">Operator diagnostics</p>
       <h2>Auth runtime configuration</h2>
       <p className="muted">Use this before escalating: it shows the server-resolved runtime auth config for the current deployment.</p>
       <div className="kvGrid compactKvGrid authDiagnosticGrid">
         <p>
           <span>authTransport</span>
-          {loading ? 'loading…' : 'same-origin proxy'}
-        </p>
-        <p>
-          <span>backendApiUrl</span>
-          {loading ? 'loading…' : envValue(runtimeConfig.apiUrl)}
+          {buildInfoLoading ? 'loading…' : envValue(buildInfo?.authMode ?? 'same-origin proxy')}
         </p>
         <p>
           <span>configured</span>
           {loading ? 'loading…' : envValue(runtimeConfig.configured)}
         </p>
         <p>
-          <span>apiUrl</span>
+          <span>backendApiConfigured</span>
           {loading ? 'loading…' : envValue(runtimeConfig.apiUrl)}
         </p>
         <p>
