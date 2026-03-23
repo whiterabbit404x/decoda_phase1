@@ -644,8 +644,8 @@ td .tableMeta {
 }
 
 .previewDeploymentNotice {
-  border: 1px solid rgba(245, 158, 11, 0.5);
-  background: rgba(120, 53, 15, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.6);
+  background: rgba(120, 53, 15, 0.22);
   margin-bottom: 1rem;
 }
 
@@ -660,6 +660,10 @@ td .tableMeta {
 .previewDeploymentNotice a {
   color: #fbbf24;
   font-weight: 600;
+}
+
+.previewDeploymentNotice strong {
+  color: #ffdf8c;
 }
 
 .nestedCard {
@@ -924,4 +928,37 @@ td .tableMeta {
   .historyLayout {
     grid-template-columns: 1fr;
   }
+}
+
+.authBuildBadge {
+  margin: 1rem 0 1.1rem;
+  padding: 0.9rem 1rem;
+  border-color: rgba(88, 166, 255, 0.36);
+  background: linear-gradient(180deg, rgba(18, 33, 58, 0.92), rgba(12, 20, 35, 0.94));
+}
+
+.authBuildBadgeHeader {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.authBuildBadgeHeader p {
+  margin-bottom: 0;
+}
+
+.authBuildBadgeSummary {
+  color: #d2dae2;
+  line-height: 1.5;
+}
+
+.authBuildBadgeGrid {
+  margin-bottom: 0;
+}
+
+.authBuildBadgeGrid p {
+  min-height: 4.35rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(13, 17, 23, 0.45);
 }
