@@ -1,6 +1,6 @@
 import { getRuntimeConfig } from './runtime-config';
 
-export const AUTH_MODE = 'same-origin /api/auth/* proxy';
+export const AUTH_MODE = 'same-origin /api/auth/* proxy (deployment-specific)';
 
 export type BuildInfo = {
   vercelEnv: string | null;

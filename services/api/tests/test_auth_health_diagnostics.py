@@ -108,7 +108,13 @@ def test_auth_signin_route_returns_json_schema_error_instead_of_500(api_main, mo
     response = client.post('/auth/signin', json={'email': 'demo@decoda.app', 'password': 'PilotDemoPass123!'})
 
     assert response.status_code == 503
-    assert response.json() == {'detail': 'Pilot auth schema is not initialized. Missing required tables: users.'}
+    assert response.json() == {
+        'code': 'pilot_schema_missing',
+        'detail': 'Pilot auth schema is not initialized. Missing required tables: users. Run services/api/scripts/migrate.py before using live auth routes.',
+        'message': 'Pilot auth schema is not initialized. Missing required tables: users. Run services/api/scripts/migrate.py before using live auth routes.',
+        'missingTables': ['users'],
+        'pilotSchemaReady': False,
+    }
 
 
 def test_health_details_reports_pilot_and_embedded_readiness_flags(api_main, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -190,7 +190,7 @@ test.describe('runtime auth configuration', () => {
         commitSha: 'abc123def456',
         shortCommitSha: 'abc123d',
         buildTimestamp: '2026-03-23T12:34:56.000Z',
-        authMode: 'same-origin /api/auth/* proxy',
+        authMode: 'same-origin /api/auth/* proxy (deployment-specific)',
         runtimeConfig: {
           apiUrl: 'https://api.preview.decoda.example',
           liveModeEnabled: true,
@@ -206,6 +206,8 @@ test.describe('runtime auth configuration', () => {
       });
     });
   });
+
+
 
   test('pilot-auth-context fetches runtime config at runtime instead of reading public env at module scope', async () => {
     const source = readFileSync(path.join(process.cwd(), 'apps/web/app/pilot-auth-context.tsx'), 'utf8');
@@ -236,7 +238,7 @@ test.describe('runtime auth configuration', () => {
     expect(signInPageSource).toContain("process.env.VERCEL_ENV === 'preview'");
     expect(signUpPageSource).toContain("process.env.VERCEL_ENV === 'preview'");
     expect(previewNoticeSource).toContain('/api/build-info');
-    expect(previewNoticeSource).toContain('This is a deployment-specific preview URL. Older preview URLs may not reflect the latest source.');
+    expect(previewNoticeSource).toContain('This is a deployment-specific preview URL. Older preview URLs may be stale.');
   });
 
   test('auth pages use the build badge and reject legacy auth labels', async () => {
@@ -251,7 +253,7 @@ test.describe('runtime auth configuration', () => {
     expect(buildBadgeSource).toContain('environment');
     expect(buildBadgeSource).toContain('host');
     expect(buildBadgeSource).toContain('branch');
-    expect(buildBadgeSource).toContain('commit');
+    expect(buildBadgeSource).toContain('short commit SHA');
     expect(buildBadgeSource).toContain('build timestamp');
     expect(buildBadgeSource).toContain('auth mode');
     expect(signInClientSource).not.toContain('Auth environment snapshot');

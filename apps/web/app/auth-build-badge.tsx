@@ -70,7 +70,7 @@ export default function AuthBuildBadge({ className }: AuthBuildBadgeProps) {
         ['environment', loading ? 'loading…' : 'unavailable'],
         ['host', loading ? 'loading…' : 'unavailable'],
         ['branch', loading ? 'loading…' : 'unavailable'],
-        ['commit', loading ? 'loading…' : 'unavailable'],
+        ['short commit SHA', loading ? 'loading…' : 'unavailable'],
         ['build timestamp', loading ? 'loading…' : 'not exposed'],
         ['auth mode', loading ? 'loading…' : 'unavailable'],
       ] as const;
@@ -80,7 +80,7 @@ export default function AuthBuildBadge({ className }: AuthBuildBadgeProps) {
       ['environment', formatValue(buildInfo.vercelEnv)],
       ['host', formatValue(buildInfo.host)],
       ['branch', formatValue(buildInfo.branch)],
-      ['commit', formatValue(buildInfo.shortCommitSha ?? buildInfo.commitSha)],
+      ['short commit SHA', formatValue(buildInfo.shortCommitSha ?? buildInfo.commitSha)],
       ['build timestamp', formatBuildTimestamp(buildInfo.buildTimestamp)],
       ['auth mode', formatValue(buildInfo.authMode)],
     ] as const;
@@ -92,7 +92,7 @@ export default function AuthBuildBadge({ className }: AuthBuildBadgeProps) {
         <p className="sectionEyebrow">Deployment identity</p>
         <p className="authBuildBadgeSummary">
           {buildInfo
-            ? `This auth page is running from ${formatValue(buildInfo.host)} on ${formatValue(buildInfo.branch)} @ ${formatValue(buildInfo.shortCommitSha ?? buildInfo.commitSha)}.`
+            ? `This auth page is running from ${formatValue(buildInfo.host)} on ${formatValue(buildInfo.branch)} @ ${formatValue(buildInfo.shortCommitSha ?? buildInfo.commitSha)} with ${formatValue(buildInfo.authMode)}.`
             : 'Loading deployment identity for this auth page…'}
         </p>
       </div>

@@ -128,6 +128,45 @@ def test_seed_script_pilot_demo_runs_migrations_and_seeds_demo_login(seed_module
     assert 'demo_seed_status' in output
 
 
+
+
+def test_seed_demo_workspace_backfills_existing_demo_login(pilot_module, monkeypatch: pytest.MonkeyPatch) -> None:
+    executed: list[tuple[str, object]] = []
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            normalized = ' '.join(str(statement).split())
+            executed.append((normalized, params))
+            if 'SELECT required.table_name FROM unnest' in normalized:
+                return _Result([])
+            if 'SELECT id, current_workspace_id FROM users WHERE email = %s' in normalized:
+                return _Result([{'id': 'user-1', 'current_workspace_id': None}])
+            if 'SELECT wm.workspace_id, w.name, w.slug' in normalized:
+                return _Result([])
+            if 'SELECT 1 FROM workspaces WHERE slug = %s' in normalized:
+                return _Result([])
+            return _Result()
+
+        def commit(self):
+            executed.append(('COMMIT', None))
+
+    @contextmanager
+    def fake_pg_connection():
+        yield _Connection()
+
+    monkeypatch.setattr(pilot_module, 'require_live_mode', lambda: None)
+    monkeypatch.setattr(pilot_module, 'pg_connection', fake_pg_connection)
+    monkeypatch.setattr(pilot_module, 'build_user_response', lambda connection, user_id: {'id': user_id, 'email': 'demo@decoda.app'})
+
+    payload = pilot_module.seed_demo_workspace('demo@decoda.app', 'PilotDemoPass123!', 'Decoda Demo Workspace', 'Decoda Demo User')
+
+    assert payload['email'] == 'demo@decoda.app'
+    assert payload['password'] == 'PilotDemoPass123!'
+    assert payload['workspace_created'] is True
+    assert any('INSERT INTO workspaces' in statement for statement, _ in executed)
+    assert any('INSERT INTO workspace_members' in statement for statement, _ in executed)
+    assert any('UPDATE users SET password_hash' in statement for statement, _ in executed)
+
 def test_embedded_loader_isolates_top_level_app_package_namespaces(api_main) -> None:
     api_main.load_embedded_service_main.cache_clear()
 
@@ -167,3 +206,14 @@ def test_embedded_dashboard_fallback_still_works_when_loader_fails(api_main, mon
     assert 'threat_engine' in api_main.DEPENDENCY_RUNTIME_STATUS
     assert api_main.DEPENDENCY_RUNTIME_STATUS['threat_engine']['last_used_mode'] == 'fallback'
     assert 'unavailable' in str(api_main.DEPENDENCY_RUNTIME_STATUS['threat_engine']['last_error'])
+
+
+def test_migration_sql_creates_core_pilot_auth_tables() -> None:
+    foundation_sql = (REPO_ROOT / 'services' / 'api' / 'migrations' / '0001_pilot_foundation.sql').read_text()
+    auth_sessions_sql = (REPO_ROOT / 'services' / 'api' / 'migrations' / '0002_pilot_auth_sessions.sql').read_text()
+
+    assert 'CREATE TABLE IF NOT EXISTS users' in foundation_sql
+    assert 'CREATE TABLE IF NOT EXISTS workspaces' in foundation_sql
+    assert 'CREATE TABLE IF NOT EXISTS workspace_members' in foundation_sql
+    assert 'CREATE TABLE IF NOT EXISTS auth_sessions' in auth_sessions_sql
+    assert 'CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_sessions_token_hash_unique' in auth_sessions_sql

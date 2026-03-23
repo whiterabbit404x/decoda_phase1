@@ -24,6 +24,7 @@ CORE_PILOT_TABLES = (
     'users',
     'workspaces',
     'workspace_members',
+    'auth_sessions',
     'analysis_runs',
     'alerts',
     'governance_actions',
@@ -125,15 +126,35 @@ def _missing_relation_error(exc: Exception) -> bool:
     return exc.__class__.__name__ == 'UndefinedTable' or 'does not exist' in message and 'relation' in message
 
 
-def _schema_missing_http_exception(missing_tables: Iterable[str]) -> HTTPException:
-    tables = ', '.join(sorted(dict.fromkeys(missing_tables)))
-    return HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail=(
+def schema_missing_error_payload(missing_tables: Iterable[str]) -> dict[str, Any]:
+    unique_tables = sorted(dict.fromkeys(str(table) for table in missing_tables if str(table).strip()))
+    table_list = ', '.join(unique_tables) if unique_tables else 'unknown'
+    return {
+        'code': 'pilot_schema_missing',
+        'detail': (
             'Pilot auth schema is not initialized. '
-            f'Missing required tables: {tables}. '
+            f'Missing required tables: {table_list}. '
             'Run services/api/scripts/migrate.py before using live auth routes.'
         ),
+        'message': (
+            'Pilot auth schema is not initialized. '
+            f'Missing required tables: {table_list}. '
+            'Run services/api/scripts/migrate.py before using live auth routes.'
+        ),
+        'missingTables': unique_tables,
+        'pilotSchemaReady': False,
+    }
+
+
+def _schema_missing_http_exception(missing_tables: Iterable[str]) -> HTTPException:
+    payload = schema_missing_error_payload(missing_tables)
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=payload['detail'],
+        headers={
+            'X-Decoda-Error-Code': str(payload['code']),
+            'X-Decoda-Missing-Tables': ','.join(payload['missingTables']),
+        },
     )
 
 
@@ -659,20 +680,74 @@ def seed_demo_workspace(email: str, password: str, workspace_name: str, full_nam
     _require_password(password)
     with pg_connection() as connection:
         ensure_pilot_schema(connection)
-        existing = connection.execute('SELECT id FROM users WHERE email = %s', (normalized_email,)).fetchone()
-        if existing is not None:
-            user = build_user_response(connection, existing['id'])
-            return {'seeded': False, 'user': user, 'email': normalized_email, 'password': '[unchanged]'}
-    response = signup_user(
-        {
+        existing = connection.execute(
+            'SELECT id, current_workspace_id FROM users WHERE email = %s',
+            (normalized_email,),
+        ).fetchone()
+        if existing is None:
+            response = signup_user(
+                {
+                    'email': normalized_email,
+                    'password': password,
+                    'full_name': full_name,
+                    'workspace_name': workspace_name,
+                },
+                Request({'type': 'http', 'client': ('seed-script', 0), 'headers': []}),
+            )
+            return {'seeded': True, 'user': response['user'], 'email': normalized_email, 'password': password}
+
+        user_id = existing['id']
+        password_hash = hash_password(password)
+        membership = connection.execute(
+            '''
+            SELECT wm.workspace_id, w.name, w.slug
+            FROM workspace_members wm
+            JOIN workspaces w ON w.id = wm.workspace_id
+            WHERE wm.user_id = %s
+            ORDER BY wm.created_at ASC
+            LIMIT 1
+            ''',
+            (user_id,),
+        ).fetchone()
+        workspace_created = False
+        workspace_id = str(existing['current_workspace_id'] or '')
+        if membership is not None and not workspace_id:
+            workspace_id = str(membership['workspace_id'])
+        if not workspace_id:
+            workspace_id = str(uuid.uuid4())
+            slug_base = _slugify(workspace_name)
+            slug = slug_base
+            suffix = 1
+            while connection.execute('SELECT 1 FROM workspaces WHERE slug = %s', (slug,)).fetchone() is not None:
+                suffix += 1
+                slug = f'{slug_base}-{suffix}'
+            connection.execute(
+                'INSERT INTO workspaces (id, name, slug, created_by_user_id, created_at) VALUES (%s, %s, %s, %s, NOW())',
+                (workspace_id, workspace_name, slug, user_id),
+            )
+            connection.execute(
+                'INSERT INTO workspace_members (id, workspace_id, user_id, role, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT (workspace_id, user_id) DO NOTHING',
+                (str(uuid.uuid4()), workspace_id, user_id, 'workspace_owner'),
+            )
+            workspace_created = True
+        elif membership is None:
+            connection.execute(
+                'INSERT INTO workspace_members (id, workspace_id, user_id, role, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT (workspace_id, user_id) DO NOTHING',
+                (str(uuid.uuid4()), workspace_id, user_id, 'workspace_owner'),
+            )
+        connection.execute(
+            'UPDATE users SET password_hash = %s, full_name = %s, current_workspace_id = %s, updated_at = NOW(), last_sign_in_at = NOW() WHERE id = %s',
+            (password_hash, full_name, workspace_id, user_id),
+        )
+        connection.commit()
+        user = build_user_response(connection, user_id)
+        return {
+            'seeded': workspace_created,
+            'user': user,
             'email': normalized_email,
             'password': password,
-            'full_name': full_name,
-            'workspace_name': workspace_name,
-        },
-        Request({'type': 'http', 'client': ('seed-script', 0), 'headers': []}),
-    )
-    return {'seeded': True, 'user': response['user'], 'email': normalized_email, 'password': password}
+            'workspace_created': workspace_created,
+        }
 
 
 def persist_analysis_run(
