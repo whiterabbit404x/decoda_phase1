@@ -4,8 +4,11 @@ export default function PreviewDeploymentNotice() {
       <p className="eyebrow">Preview deployment</p>
       <h2>Preview environment detected</h2>
       <p>
-        This Vercel preview build uses deployment-specific runtime config. If sign-in or sign-up fails here while production still works,
-        check <a href="/api/build-info">/api/build-info</a> first to confirm the branch, commit, live-mode flag, and backend API URL resolved for this preview.
+        <strong>This is a deployment-specific preview URL. Older preview URLs may not reflect the latest source.</strong>
+      </p>
+      <p>
+        Check <a href="/api/build-info">/api/build-info</a> first to confirm the environment, host, branch, commit, auth mode,
+        and backend API URL resolved for this preview before escalating auth issues.
       </p>
     </aside>
   );

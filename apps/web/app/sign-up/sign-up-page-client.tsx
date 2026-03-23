@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
+import AuthBuildBadge from '../auth-build-badge';
 import AuthDiagnosticCard from '../auth-diagnostic-card';
 import { resolveAuthFormState } from '../auth-form-state';
 import { usePilotAuth } from '../pilot-auth-context';
@@ -57,6 +58,7 @@ export default function SignUpPageClient({ previewNotice }: { previewNotice?: Re
         <div>
           <p className="eyebrow">Pilot onboarding</p>
           <h1>Create your company workspace</h1>
+          <AuthBuildBadge />
           <p className="lede">Create the first workspace owner account for your team and start saving live pilot activity.</p>
         </div>
       </div>

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
+import AuthBuildBadge from '../auth-build-badge';
 import AuthDiagnosticCard from '../auth-diagnostic-card';
 import { resolveAuthFormState } from '../auth-form-state';
 import { usePilotAuth } from '../pilot-auth-context';
@@ -61,6 +62,7 @@ export default function SignInPageClient({
         <div>
           <p className="eyebrow">Pilot access</p>
           <h1>Sign in to your workspace</h1>
+          <AuthBuildBadge />
           <p className="lede">Open your live pilot workspace, save operating history, and keep your team on the same company view.</p>
         </div>
       </div>

@@ -101,24 +101,33 @@ test.describe('runtime auth configuration', () => {
     });
   });
 
-  test('build-info route reports vercel metadata plus runtime config summary', async () => {
+  test('build-info route reports deployment identity plus runtime config summary', async () => {
     await withEnv({
       NODE_ENV: 'production',
       VERCEL_ENV: 'preview',
       VERCEL_GIT_COMMIT_REF: 'feature/preview-hardening',
       VERCEL_GIT_COMMIT_SHA: 'abc123def456',
+      BUILD_TIMESTAMP: '2026-03-23T12:34:56.000Z',
       API_URL: 'https://api.preview.decoda.example',
       NEXT_PUBLIC_LIVE_MODE_ENABLED: 'true',
       API_TIMEOUT_MS: '3456',
     }, async () => {
-      const response = await getBuildInfoRoute();
+      const response = await getBuildInfoRoute(new Request('https://preview.decoda.example/api/build-info', {
+        headers: {
+          host: 'preview.decoda.example',
+        },
+      }));
       const payload = await response.json() as Record<string, unknown>;
 
       expect(response.headers.get('Cache-Control')).toBe('no-store');
       expect(payload).toEqual({
         vercelEnv: 'preview',
+        host: 'preview.decoda.example',
         branch: 'feature/preview-hardening',
         commitSha: 'abc123def456',
+        shortCommitSha: 'abc123d',
+        buildTimestamp: '2026-03-23T12:34:56.000Z',
+        authMode: 'same-origin /api/auth/* proxy',
         runtimeConfig: {
           apiUrl: 'https://api.preview.decoda.example',
           liveModeEnabled: true,
@@ -164,7 +173,32 @@ test.describe('runtime auth configuration', () => {
     expect(signInPageSource).toContain("process.env.VERCEL_ENV === 'preview'");
     expect(signUpPageSource).toContain("process.env.VERCEL_ENV === 'preview'");
     expect(previewNoticeSource).toContain('/api/build-info');
-    expect(previewNoticeSource).toContain('Preview environment detected');
+    expect(previewNoticeSource).toContain('This is a deployment-specific preview URL. Older preview URLs may not reflect the latest source.');
+  });
+
+  test('auth pages use the build badge and reject legacy auth labels', async () => {
+    const signInClientSource = readFileSync(path.join(process.cwd(), 'apps/web/app/sign-in/sign-in-page-client.tsx'), 'utf8');
+    const signUpClientSource = readFileSync(path.join(process.cwd(), 'apps/web/app/sign-up/sign-up-page-client.tsx'), 'utf8');
+    const buildBadgeSource = readFileSync(path.join(process.cwd(), 'apps/web/app/auth-build-badge.tsx'), 'utf8');
+    const authDiagnosticCardSource = readFileSync(path.join(process.cwd(), 'apps/web/app/auth-diagnostic-card.tsx'), 'utf8');
+
+    expect(signInClientSource).toContain('<AuthBuildBadge />');
+    expect(signUpClientSource).toContain('<AuthBuildBadge />');
+    expect(buildBadgeSource).toContain("fetch('/api/build-info'");
+    expect(buildBadgeSource).toContain('environment');
+    expect(buildBadgeSource).toContain('host');
+    expect(buildBadgeSource).toContain('branch');
+    expect(buildBadgeSource).toContain('commit');
+    expect(buildBadgeSource).toContain('build timestamp');
+    expect(buildBadgeSource).toContain('auth mode');
+    expect(signInClientSource).not.toContain('Auth environment snapshot');
+    expect(signUpClientSource).not.toContain('Auth environment snapshot');
+    expect(buildBadgeSource).not.toContain('Auth environment snapshot');
+    expect(authDiagnosticCardSource).not.toContain('Auth environment snapshot');
+    expect(signInClientSource).not.toContain('NEXT_PUBLIC_API_URL');
+    expect(signUpClientSource).not.toContain('NEXT_PUBLIC_API_URL');
+    expect(buildBadgeSource).not.toContain('NEXT_PUBLIC_API_URL');
+    expect(authDiagnosticCardSource).not.toContain('NEXT_PUBLIC_API_URL');
   });
 
   test('product layout redirect logic uses resolved server runtime config', async () => {
