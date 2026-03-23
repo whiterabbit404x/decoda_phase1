@@ -69,6 +69,38 @@ test.describe('vercel preview build validation', () => {
     expect(message).toContain('Action summary: missing backend URL env vars (API_URL, NEXT_PUBLIC_API_URL); Root Directory must be apps/web; verify the env vars are set on the same Vercel project linked to this GitHub repository; redeploy after fixing settings.');
   });
 
+  test('fails preview builds when API_URL points to localhost', async () => {
+    const result = validateBuildEnvironment({
+      NODE_ENV: 'production',
+      VERCEL: '1',
+      VERCEL_ENV: 'preview',
+      NEXT_PUBLIC_LIVE_MODE_ENABLED: 'true',
+      API_URL: 'http://127.0.0.1:8000',
+    });
+
+    expect(result.errors).toEqual([
+      'Preview/Production deployments cannot use localhost backend URLs. Set API_URL to the deployed backend URL and redeploy. Invalid vars: API_URL.',
+    ]);
+  });
+
+  test('fails production builds when NEXT_PUBLIC_API_URL points to localhost', async () => {
+    const result = validateBuildEnvironment({
+      NODE_ENV: 'production',
+      VERCEL: '1',
+      VERCEL_ENV: 'production',
+      NEXT_PUBLIC_LIVE_MODE_ENABLED: 'false',
+      NEXT_PUBLIC_API_URL: 'http://localhost:8000',
+    });
+
+    expect(result.errors).toEqual([
+      'Preview/Production deployments cannot use localhost backend URLs. Set API_URL to the deployed backend URL and redeploy. Invalid vars: NEXT_PUBLIC_API_URL.',
+    ]);
+
+    const message = formatValidationMessage(result);
+    expect(message).toContain('Preview/Production deployments cannot use localhost backend URLs. Set API_URL to the deployed backend URL and redeploy.');
+    expect(message).toContain('Action summary: replace localhost backend URL env vars; Root Directory must be apps/web; verify the env vars are set on the linked Vercel project; redeploy after fixing settings.');
+  });
+
   test('fails production builds when required vars are missing', async () => {
     const result = validateBuildEnvironment({
       NODE_ENV: 'production',

@@ -1,4 +1,4 @@
-import { ApiConfig, DEFAULT_API_URL, resolveApiConfig } from './api-config';
+import { ApiConfig, resolveApiConfig } from './api-config';
 
 export type DashboardCard = {
   title: string;
@@ -976,7 +976,7 @@ export function normalizeDashboardResponse(payload: unknown): DashboardResponse 
 
 export function resolveApiUrl(requestedApiUrl?: string | null) {
   const apiConfig = resolveApiConfig({ requestedApiUrl });
-  return apiConfig.apiUrl ?? (apiConfig.isProduction ? '' : DEFAULT_API_URL);
+  return apiConfig.apiUrl ?? '';
 }
 
 export function resolveFetchTimeoutMs() {

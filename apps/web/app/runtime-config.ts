@@ -7,7 +7,7 @@ function mapApiUrlSource(source: ApiUrlSource): RuntimeConfigValueSource {
       return 'API_URL';
     case 'next_public_api_url':
       return 'NEXT_PUBLIC_API_URL';
-    case 'default':
+    case 'explicit_local_fallback':
       return 'default';
     case 'missing':
       return 'missing';
@@ -17,6 +17,25 @@ function mapApiUrlSource(source: ApiUrlSource): RuntimeConfigValueSource {
       return 'API_URL';
     default:
       return 'invalid';
+  }
+}
+
+function describeApiUrlSource(source: ApiUrlSource) {
+  switch (source) {
+    case 'api_url':
+      return 'API URL source: API_URL.';
+    case 'next_public_api_url':
+      return 'API URL source: NEXT_PUBLIC_API_URL.';
+    case 'explicit_local_fallback':
+      return 'API URL source: explicit local fallback. Using explicit local API fallback. Do not use this in Vercel preview or production.';
+    case 'missing':
+      return 'API URL source: missing.';
+    case 'invalid':
+      return 'API URL source: invalid.';
+    case 'request':
+      return 'API URL source: request override.';
+    default:
+      return 'API URL source: invalid.';
   }
 }
 
@@ -95,7 +114,7 @@ export function getRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeC
   const apiConfig = resolveApiConfig({ env });
   const liveMode = parseBooleanEnv(env.LIVE_MODE_ENABLED, env.NEXT_PUBLIC_LIVE_MODE_ENABLED);
   const apiTimeout = parseTimeoutEnv(env.API_TIMEOUT_MS, env.NEXT_PUBLIC_API_TIMEOUT_MS);
-  const diagnostics = [apiConfig.diagnostic, liveMode.diagnostic, apiTimeout.diagnostic].filter(Boolean);
+  const diagnostics = [describeApiUrlSource(apiConfig.source), apiConfig.diagnostic, liveMode.diagnostic, apiTimeout.diagnostic].filter(Boolean);
 
   return {
     apiUrl: apiConfig.apiUrl,

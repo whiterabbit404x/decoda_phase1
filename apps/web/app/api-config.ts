@@ -1,4 +1,4 @@
-export const DEFAULT_API_URL = 'http://127.0.0.1:8000';
+const EXPLICIT_LOCAL_FALLBACK_API_URL = 'http://127.0.0.1:8000';
 
 const LOCAL_API_HOSTS = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1']);
 
@@ -6,7 +6,7 @@ export type ApiUrlSource =
   | 'request'
   | 'api_url'
   | 'next_public_api_url'
-  | 'default'
+  | 'explicit_local_fallback'
   | 'missing'
   | 'invalid';
 
@@ -52,6 +52,13 @@ export function isLocalApiBaseUrl(value: string | null | undefined) {
   }
 }
 
+function isExplicitLocalFallbackEnabled(env: NodeJS.ProcessEnv) {
+  const allowLocalApiFallback = env.ALLOW_LOCAL_API_FALLBACK?.trim().toLowerCase() === 'true';
+  const allowPublicLocalApiFallback = env.NEXT_PUBLIC_ALLOW_LOCAL_API_FALLBACK?.trim().toLowerCase() === 'true';
+
+  return allowLocalApiFallback || allowPublicLocalApiFallback;
+}
+
 export function resolveApiConfig(
   options: {
     requestedApiUrl?: string | null;
@@ -63,6 +70,7 @@ export function resolveApiConfig(
   const requestedApiUrl = normalizeApiBaseUrl(options.requestedApiUrl);
   const apiUrlFromServerEnv = normalizeApiBaseUrl(env.API_URL);
   const apiUrlFromPublicEnv = normalizeApiBaseUrl(env.NEXT_PUBLIC_API_URL);
+  const localFallbackEnabled = !isProduction && isExplicitLocalFallbackEnabled(env);
 
   const validateApiUrl = (apiUrl: string, source: ApiUrlSource): ApiConfig => {
     if (!isValidApiBaseUrl(apiUrl)) {
@@ -70,7 +78,9 @@ export function resolveApiConfig(
         ? 'requested API URL'
         : source === 'api_url'
           ? 'API_URL'
-          : 'NEXT_PUBLIC_API_URL';
+          : source === 'explicit_local_fallback'
+            ? 'explicit local fallback API URL'
+            : 'NEXT_PUBLIC_API_URL';
 
       return {
         apiUrl: null,
@@ -109,19 +119,19 @@ export function resolveApiConfig(
     return validateApiUrl(apiUrlFromPublicEnv, 'next_public_api_url');
   }
 
-  if (isProduction) {
+  if (localFallbackEnabled) {
     return {
-      apiUrl: null,
-      source: 'missing',
+      apiUrl: EXPLICIT_LOCAL_FALLBACK_API_URL,
+      source: 'explicit_local_fallback',
       isProduction,
-      diagnostic: 'API_URL or NEXT_PUBLIC_API_URL is required in production.',
+      diagnostic: 'Using explicit local API fallback. Do not use this in Vercel preview or production.',
     };
   }
 
   return {
-    apiUrl: DEFAULT_API_URL,
-    source: 'default',
+    apiUrl: null,
+    source: 'missing',
     isProduction,
-    diagnostic: null,
+    diagnostic: 'API_URL or NEXT_PUBLIC_API_URL is required. Local fallback is disabled unless ALLOW_LOCAL_API_FALLBACK=true.',
   };
 }
