@@ -28,6 +28,20 @@ function getBuildEnvironmentSummary(env = process.env) {
   };
 }
 
+function getMissingApiUrlMessage(vercelEnv) {
+  const baseMessage = 'Missing both API_URL and NEXT_PUBLIC_API_URL. The same-origin auth proxy prefers API_URL, so set API_URL on the Vercel project (recommended) or NEXT_PUBLIC_API_URL before redeploying.';
+
+  if (vercelEnv === 'preview') {
+    return `${baseMessage} Preview deployments cannot reach auth/runtime APIs without one of these values. Fix this in Vercel → Project Settings → Environment Variables for the Preview environment, then redeploy the PR preview.`;
+  }
+
+  if (vercelEnv === 'production') {
+    return `${baseMessage} Production deployments stay blocked until one of these backend URLs is configured.`;
+  }
+
+  return `${baseMessage} Configure one backend URL so the app can resolve auth/runtime traffic correctly.`;
+}
+
 function validateBuildEnvironment(env = process.env) {
   const summary = getBuildEnvironmentSummary(env);
   const warnings = [];
@@ -46,11 +60,11 @@ function validateBuildEnvironment(env = process.env) {
   };
 
   if (!liveModeValue) {
-    const message = 'Missing NEXT_PUBLIC_LIVE_MODE_ENABLED. Preview builds warn because the app can still boot in demo mode, but production must set it to true or false explicitly.';
+    const productionMessage = 'Missing NEXT_PUBLIC_LIVE_MODE_ENABLED. Production deployments must set this to true or false explicitly so live/demo runtime behavior is unambiguous.';
     if (isProduction) {
-      errors.push(message);
+      errors.push(productionMessage);
     } else if (isPreview) {
-      warnings.push(message);
+      warnings.push('Missing NEXT_PUBLIC_LIVE_MODE_ENABLED. Preview can still boot for PR validation, but set it to true or false so operators know whether the deployment should run in live mode or demo mode.');
     } else {
       warnings.push('Missing NEXT_PUBLIC_LIVE_MODE_ENABLED. Set it to true or false so the web app can resolve runtime mode safely.');
     }
@@ -59,14 +73,14 @@ function validateBuildEnvironment(env = process.env) {
   }
 
   if (!apiUrl && !publicApiUrl) {
-    const message = 'Missing both API_URL and NEXT_PUBLIC_API_URL. The same-origin auth proxy prefers API_URL, and preview/production builds cannot authenticate without at least one valid backend URL.';
+    const message = getMissingApiUrlMessage(vercelEnv);
     if (isPreview || isProduction) {
       errors.push(message);
     } else {
       warnings.push(message);
     }
   } else if (apiUrl && !publicApiUrl && isPreview) {
-    warnings.push('NEXT_PUBLIC_API_URL is missing, but API_URL is present. Preview can continue because the same-origin auth proxy prefers the server-side API_URL.');
+    warnings.push('NEXT_PUBLIC_API_URL is missing, but API_URL is present. Preview can continue because the same-origin auth proxy prefers the server-side API_URL. Add NEXT_PUBLIC_API_URL only if the browser must call a different public backend URL.');
   }
 
   if (isVercel) {

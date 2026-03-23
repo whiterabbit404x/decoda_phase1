@@ -27,8 +27,8 @@ The repo now supports a minimal **real pilot SaaS mode** alongside the existing 
 
 | Environment | Required vars | Notes |
 | --- | --- | --- |
-| Production | `NEXT_PUBLIC_LIVE_MODE_ENABLED=true`, `API_URL=https://<your-railway-api>.up.railway.app` (preferred) or `NEXT_PUBLIC_API_URL=https://<your-railway-api>.up.railway.app`, `NEXT_PUBLIC_API_TIMEOUT_MS=5000` | `next build` fails before app code runs if `NEXT_PUBLIC_LIVE_MODE_ENABLED` is missing/invalid or if both API URL vars are absent. |
-| Preview | `API_URL=https://<preview-or-shared-railway-api>.up.railway.app` (preferred) or `NEXT_PUBLIC_API_URL=https://<preview-or-shared-railway-api>.up.railway.app`; `NEXT_PUBLIC_LIVE_MODE_ENABLED=true` is strongly recommended | Preview builds warn when `NEXT_PUBLIC_LIVE_MODE_ENABLED` is missing, pass when `API_URL` exists even if `NEXT_PUBLIC_API_URL` is absent, and fail before app code runs only when both API URL vars are missing or other validation makes the app unusable. |
+| Production | `NEXT_PUBLIC_LIVE_MODE_ENABLED=true` or `false`; `API_URL=https://<your-railway-api>.up.railway.app` (preferred) or `NEXT_PUBLIC_API_URL=https://<your-railway-api>.up.railway.app`; optional `NEXT_PUBLIC_API_TIMEOUT_MS=5000` | Production remains strict: `next build` fails before app code runs if `NEXT_PUBLIC_LIVE_MODE_ENABLED` is missing/invalid or if both API URL vars are absent. |
+| Preview | `API_URL=https://<preview-or-shared-railway-api>.up.railway.app` (preferred) or `NEXT_PUBLIC_API_URL=https://<preview-or-shared-railway-api>.up.railway.app`; `NEXT_PUBLIC_LIVE_MODE_ENABLED=true` or `false` is recommended | Preview builds now pass when `API_URL` exists even if `NEXT_PUBLIC_API_URL` is absent, because the same-origin auth proxy prefers `API_URL`. Preview still fails fast if both API URL vars are missing, and the build log now tells operators exactly which Vercel environment setting to fix. |
 | Development | `NEXT_PUBLIC_LIVE_MODE_ENABLED=false` (or `true` if you are exercising pilot mode locally), `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000`, optional `NEXT_PUBLIC_API_TIMEOUT_MS=5000` | Local development still falls back to localhost defaults, but explicitly setting the vars keeps local behavior aligned with Vercel. |
 
 Recommended Vercel project settings:
@@ -36,6 +36,13 @@ Recommended Vercel project settings:
 - **Root Directory:** `apps/web`
 - **Framework Preset:** Next.js
 - **Install Command:** repo-root install is fine, but the web project itself must still build from `apps/web` inside the monorepo.
+
+Operator checklist for Vercel build validation:
+
+1. Set **Root Directory = `apps/web`**.
+2. For **Preview**, configure at least one backend URL in Vercel. `API_URL` is preferred because the same-origin auth proxy reads the server-side value first; `NEXT_PUBLIC_API_URL` is an acceptable fallback when a public browser URL is required.
+3. For **Production**, configure both a valid `NEXT_PUBLIC_LIVE_MODE_ENABLED` value (`true` or `false`) and at least one backend URL (`API_URL` preferred, `NEXT_PUBLIC_API_URL` fallback).
+4. If a preview build fails, read the build log block from `apps/web/build/vercel-build-validation.js`: it prints `vercelEnv`, branch, commit SHA, cwd, expected root directory, and found/missing status for `NEXT_PUBLIC_LIVE_MODE_ENABLED`, `API_URL`, and `NEXT_PUBLIC_API_URL`.
 
 ### Migrations and seed commands
 
