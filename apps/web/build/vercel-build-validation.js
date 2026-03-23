@@ -1,5 +1,7 @@
 const path = require('node:path');
 
+const LOCAL_API_HOSTS = new Set(['127.0.0.1', 'localhost', '0.0.0.0', '::1']);
+
 function normalizeApiBaseUrl(value) {
   const trimmed = typeof value === 'string' ? value.trim() : '';
   if (!trimmed) {
@@ -11,6 +13,19 @@ function normalizeApiBaseUrl(value) {
 
 function isBooleanString(value) {
   return value === 'true' || value === 'false';
+}
+
+function isLocalApiBaseUrl(value) {
+  const normalized = normalizeApiBaseUrl(value);
+  if (!normalized) {
+    return false;
+  }
+
+  try {
+    return LOCAL_API_HOSTS.has(new URL(normalized).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function formatVarStatus(value) {
@@ -42,6 +57,10 @@ function getMissingApiUrlMessage(vercelEnv) {
   return `${baseMessage} Configure one backend URL so the app can resolve auth/runtime traffic correctly.`;
 }
 
+function getLocalhostApiUrlMessage() {
+  return 'Preview/Production deployments cannot use localhost backend URLs. Set API_URL to the deployed backend URL and redeploy.';
+}
+
 function getActionableSummary(result) {
   const summaryParts = [];
   const missingVars = Object.entries(result.envStatus)
@@ -49,11 +68,16 @@ function getActionableSummary(result) {
     .map(([name]) => name);
   const hasRootDirectoryWarning = result.warnings.some((warning) => warning.includes('Root Directory should be apps/web'));
   const hasApiUrlError = result.errors.some((error) => error.includes('Missing both API_URL and NEXT_PUBLIC_API_URL'));
+  const hasLocalhostApiUrlError = result.errors.some((error) => error.includes('localhost backend URLs'));
   const hasLiveModeError = result.errors.some((error) => error.includes('NEXT_PUBLIC_LIVE_MODE_ENABLED'));
   const isPreview = result.summary.vercelEnv === 'preview';
 
   if (hasApiUrlError) {
     summaryParts.push(`missing backend URL env vars (${missingVars.filter((name) => name === 'API_URL' || name === 'NEXT_PUBLIC_API_URL').join(', ')})`);
+  }
+
+  if (hasLocalhostApiUrlError) {
+    summaryParts.push('replace localhost backend URL env vars');
   }
 
   if (hasLiveModeError) {
@@ -113,8 +137,20 @@ function validateBuildEnvironment(env = process.env) {
     } else {
       warnings.push(message);
     }
-  } else if (apiUrl && !publicApiUrl && isPreview) {
-    warnings.push('NEXT_PUBLIC_API_URL is missing, but API_URL is present. Preview can continue because the same-origin auth proxy prefers the server-side API_URL. Add NEXT_PUBLIC_API_URL only if the browser must call a different public backend URL.');
+  } else {
+    const localhostApiVars = [];
+    if (apiUrl && isLocalApiBaseUrl(apiUrl)) {
+      localhostApiVars.push('API_URL');
+    }
+    if (publicApiUrl && isLocalApiBaseUrl(publicApiUrl)) {
+      localhostApiVars.push('NEXT_PUBLIC_API_URL');
+    }
+
+    if (localhostApiVars.length > 0 && (isPreview || isProduction)) {
+      errors.push(`${getLocalhostApiUrlMessage()} Invalid vars: ${localhostApiVars.join(', ')}.`);
+    } else if (apiUrl && !publicApiUrl && isPreview) {
+      warnings.push('NEXT_PUBLIC_API_URL is missing, but API_URL is present. Preview can continue because the same-origin auth proxy prefers the server-side API_URL. Add NEXT_PUBLIC_API_URL only if the browser must call a different public backend URL.');
+    }
   }
 
   if (isVercel) {

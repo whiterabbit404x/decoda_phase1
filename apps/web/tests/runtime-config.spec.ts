@@ -7,9 +7,11 @@ import { shouldRedirectUnauthenticatedProductAccess } from '../app/(product)/lay
 import { GET as getBuildInfoRoute } from '../app/api/build-info/route';
 import { GET as getRuntimeConfigRoute } from '../app/api/runtime-config/route';
 import { resolveAuthFormState } from '../app/auth-form-state';
-import { DEFAULT_API_URL, resolveApiConfig } from '../app/api-config';
+import { resolveApiConfig } from '../app/api-config';
 import { getRuntimeConfig } from '../app/runtime-config';
 import type { RuntimeConfig } from '../app/runtime-config-schema';
+
+const LOCAL_API_URL = 'http://127.0.0.1:8000';
 
 function withEnv(overrides: Record<string, string | undefined>, run: () => Promise<void> | void) {
   const originalValues = new Map<string, string | undefined>();
@@ -51,13 +53,13 @@ test.describe('runtime auth configuration', () => {
     const configFromServerEnv = resolveApiConfig({
       env: {
         NODE_ENV: 'production',
-        API_URL: DEFAULT_API_URL,
+        API_URL: LOCAL_API_URL,
       } as NodeJS.ProcessEnv,
     });
     const configFromPublicEnv = resolveApiConfig({
       env: {
         NODE_ENV: 'production',
-        NEXT_PUBLIC_API_URL: DEFAULT_API_URL,
+        NEXT_PUBLIC_API_URL: LOCAL_API_URL,
       } as NodeJS.ProcessEnv,
     });
 
@@ -65,6 +67,67 @@ test.describe('runtime auth configuration', () => {
     expect(configFromServerEnv.diagnostic).toBe('Production web config cannot use localhost as API base URL.');
     expect(configFromPublicEnv.apiUrl).toBeNull();
     expect(configFromPublicEnv.diagnostic).toBe('Production web config cannot use localhost as API base URL.');
+  });
+
+  test('development allows explicit local fallback when opted in', async () => {
+    const config = resolveApiConfig({
+      env: {
+        NODE_ENV: 'development',
+        ALLOW_LOCAL_API_FALLBACK: 'true',
+      } as NodeJS.ProcessEnv,
+    });
+    const runtimeConfig = getRuntimeConfig({
+      NODE_ENV: 'development',
+      ALLOW_LOCAL_API_FALLBACK: 'true',
+    } as NodeJS.ProcessEnv);
+
+    expect(config).toEqual({
+      apiUrl: LOCAL_API_URL,
+      source: 'explicit_local_fallback',
+      isProduction: false,
+      diagnostic: 'Using explicit local API fallback. Do not use this in Vercel preview or production.',
+    });
+    expect(runtimeConfig.apiUrl).toBe(LOCAL_API_URL);
+    expect(runtimeConfig.configured).toBe(true);
+    expect(runtimeConfig.source.apiUrl).toBe('default');
+    expect(runtimeConfig.diagnostic).toContain('API URL source: explicit local fallback.');
+    expect(runtimeConfig.diagnostic).toContain('Using explicit local API fallback. Do not use this in Vercel preview or production.');
+  });
+
+  test('development without fallback flag stays missing instead of defaulting to localhost', async () => {
+    const config = resolveApiConfig({
+      env: {
+        NODE_ENV: 'development',
+      } as NodeJS.ProcessEnv,
+    });
+    const runtimeConfig = getRuntimeConfig({
+      NODE_ENV: 'development',
+    } as NodeJS.ProcessEnv);
+
+    expect(config).toEqual({
+      apiUrl: null,
+      source: 'missing',
+      isProduction: false,
+      diagnostic: 'API_URL or NEXT_PUBLIC_API_URL is required. Local fallback is disabled unless ALLOW_LOCAL_API_FALLBACK=true.',
+    });
+    expect(runtimeConfig.apiUrl).toBeNull();
+    expect(runtimeConfig.configured).toBe(false);
+    expect(runtimeConfig.source.apiUrl).toBe('missing');
+    expect(runtimeConfig.diagnostic).toContain('API URL source: missing.');
+    expect(runtimeConfig.diagnostic).toContain('Local fallback is disabled unless ALLOW_LOCAL_API_FALLBACK=true.');
+  });
+
+  test('production missing API config reports missing source without localhost fallback', async () => {
+    const runtimeConfig = getRuntimeConfig({
+      NODE_ENV: 'production',
+      LIVE_MODE_ENABLED: 'true',
+    } as NodeJS.ProcessEnv);
+
+    expect(runtimeConfig.apiUrl).toBeNull();
+    expect(runtimeConfig.configured).toBe(false);
+    expect(runtimeConfig.source.apiUrl).toBe('missing');
+    expect(runtimeConfig.diagnostic).toContain('API URL source: missing.');
+    expect(runtimeConfig.diagnostic).toContain('API_URL or NEXT_PUBLIC_API_URL is required. Local fallback is disabled unless ALLOW_LOCAL_API_FALLBACK=true.');
   });
 
   test('runtime-config route returns safe server-resolved JSON', async () => {
@@ -91,7 +154,7 @@ test.describe('runtime auth configuration', () => {
       expect(payload.liveModeEnabled).toBe(true);
       expect(payload.apiTimeoutMs).toBe(4321);
       expect(payload.configured).toBe(true);
-      expect(payload.diagnostic).toBeNull();
+      expect(payload.diagnostic).toBe('API URL source: API_URL.');
       expect(payload.source).toEqual({
         apiUrl: 'API_URL',
         liveModeEnabled: 'LIVE_MODE_ENABLED',
@@ -133,7 +196,7 @@ test.describe('runtime auth configuration', () => {
           liveModeEnabled: true,
           apiTimeoutMs: 3456,
           configured: true,
-          diagnostic: null,
+          diagnostic: 'API URL source: API_URL.',
           source: {
             apiUrl: 'API_URL',
             liveModeEnabled: 'NEXT_PUBLIC_LIVE_MODE_ENABLED',
@@ -227,7 +290,7 @@ test.describe('runtime auth configuration', () => {
     const formState = resolveAuthFormState(runtimeConfig, false, false);
 
     expect(formState.submitDisabled).toBe(true);
-    expect(formState.statusMessage).toContain('API_URL or NEXT_PUBLIC_API_URL is required in production.');
+    expect(formState.statusMessage).toContain('API_URL or NEXT_PUBLIC_API_URL is required. Local fallback is disabled unless ALLOW_LOCAL_API_FALLBACK=true.');
     expect(runtimeConfig.configured).toBe(false);
   });
 });

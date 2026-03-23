@@ -12,7 +12,7 @@ test.describe('auth diagnostics helpers', () => {
     });
 
     expect(config.apiUrl).toBeNull();
-    expect(config.diagnostic).toBe('API_URL or NEXT_PUBLIC_API_URL is required in production.');
+    expect(config.diagnostic).toBe('API_URL or NEXT_PUBLIC_API_URL is required. Local fallback is disabled unless ALLOW_LOCAL_API_FALLBACK=true.');
   });
 
   test('classifies localhost transport failures as unreachable API issues', async () => {
@@ -35,7 +35,7 @@ test.describe('auth diagnostics helpers', () => {
       'sign in',
       '/api/auth/signin',
       500,
-      'API_URL or NEXT_PUBLIC_API_URL is required in production.',
+      'API_URL or NEXT_PUBLIC_API_URL is required. Local fallback is disabled unless ALLOW_LOCAL_API_FALLBACK=true.',
       {
         authTransport: 'same-origin proxy',
         backendApiUrl: null,

@@ -134,7 +134,7 @@ test.describe('same-origin auth proxy routes', () => {
 
         expect(response.status).toBe(500);
         expect(payload).toEqual({
-          detail: 'API_URL or NEXT_PUBLIC_API_URL is required in production.',
+          detail: 'API URL source: missing. API_URL or NEXT_PUBLIC_API_URL is required. Local fallback is disabled unless ALLOW_LOCAL_API_FALLBACK=true.',
           code: 'invalid_runtime_config',
           authTransport: 'same-origin proxy',
           backendApiUrl: null,
