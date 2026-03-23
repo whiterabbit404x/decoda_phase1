@@ -20,6 +20,7 @@ from urllib.request import Request as UrlRequest, urlopen
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from services.api.app.pilot import (
@@ -43,6 +44,7 @@ from services.api.app.pilot import (
     resolve_workspace,
     select_workspace_for_user,
     demo_seed_status,
+    schema_missing_error_payload,
     signin_user,
     signout_user,
     signup_user,
@@ -495,6 +497,7 @@ def _ensure_embedded_service_package(service_slug: str) -> types.ModuleType:
     package = types.ModuleType(package_name)
     package.__path__ = [str(service_app_dir)]
     package.__file__ = str(service_app_dir / '__init__.py')
+    package.__package__ = package_name
     sys.modules[package_name] = package
     return package
 
@@ -505,6 +508,8 @@ def embedded_service_import_context(service_slug: str):
     previous_aliases = {name: sys.modules.get(name) for name in EMBEDDED_ALIAS_MODULE_NAMES}
     package = _ensure_embedded_service_package(service_slug)
     try:
+        for alias_name in EMBEDDED_ALIAS_MODULE_NAMES:
+            sys.modules.pop(alias_name, None)
         sys.modules['app'] = package
         for alias_name in EMBEDDED_ALIAS_MODULE_NAMES[1:]:
             suffix = alias_name.split('.', 1)[1]
@@ -542,6 +547,8 @@ def load_embedded_service_main(service_slug: str):
             alias_module = sys.modules.get(alias_name)
             if alias_module is not None:
                 suffix = alias_name.split('.', 1)[1]
+                alias_module.__name__ = f'{package_name}.{suffix}'
+                alias_module.__package__ = package_name
                 sys.modules[f'{package_name}.{suffix}'] = alias_module
 
     return module
@@ -838,6 +845,31 @@ def pilot_runtime_diagnostics() -> dict[str, Any]:
         'embeddedRiskReady': bool(embedded_status['risk']['ready']),
         'lastEmbeddedFailureReason': last_failure_reason,
     }
+
+
+def auth_schema_error_response(exc: HTTPException) -> JSONResponse | None:
+    if exc.status_code != 503:
+        return None
+    error_code = (exc.headers or {}).get('X-Decoda-Error-Code')
+    if error_code != 'pilot_schema_missing' and 'Pilot auth schema is not initialized.' not in str(exc.detail):
+        return None
+    missing_tables = [
+        table.strip()
+        for table in ((exc.headers or {}).get('X-Decoda-Missing-Tables') or '').split(',')
+        if table.strip()
+    ]
+    payload = schema_missing_error_payload(missing_tables or ['users'])
+    return JSONResponse(payload, status_code=exc.status_code, headers={'Cache-Control': 'no-store'})
+
+
+def with_auth_schema_json(handler):
+    try:
+        return handler()
+    except HTTPException as exc:
+        response = auth_schema_error_response(exc)
+        if response is not None:
+            return response
+        raise
 
 
 def fixture_diagnostics() -> dict[str, Any]:
@@ -1164,33 +1196,33 @@ def resilience_incident(event_id: str) -> dict[str, Any]:
 @app.post('/auth/signup', summary='Create a live-mode pilot user')
 def auth_signup(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     enforce_auth_rate_limit(request, 'signup')
-    return signup_user(payload, request)
+    return with_auth_schema_json(lambda: signup_user(payload, request))
 
 
 @app.post('/auth/signin', summary='Sign in a live-mode pilot user')
 def auth_signin(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     enforce_auth_rate_limit(request, 'signin')
-    return signin_user(payload, request)
+    return with_auth_schema_json(lambda: signin_user(payload, request))
 
 
 @app.post('/auth/signout', summary='Sign out a live-mode pilot user')
 def auth_signout(request: Request) -> dict[str, Any]:
-    return signout_user(request)
+    return with_auth_schema_json(lambda: signout_user(request))
 
 
 @app.get('/auth/me', summary='Current authenticated live-mode user')
 def auth_me(request: Request) -> dict[str, Any]:
-    return {'mode': pilot_mode(), 'user': authenticate_request(request)}
+    return with_auth_schema_json(lambda: {'mode': pilot_mode(), 'user': authenticate_request(request)})
 
 
 @app.get('/workspaces', summary='List workspaces for the authenticated user')
 def workspaces(request: Request) -> dict[str, Any]:
-    return list_user_workspaces(request)
+    return with_auth_schema_json(lambda: list_user_workspaces(request))
 
 
 @app.post('/workspaces', summary='Create a workspace for the authenticated user')
 def workspace_create(payload: dict[str, Any], request: Request) -> dict[str, Any]:
-    return {'user': create_workspace_for_user(payload, request)}
+    return with_auth_schema_json(lambda: {'user': create_workspace_for_user(payload, request)})
 
 
 @app.post('/auth/select-workspace', summary='Select the active workspace for the authenticated user')
@@ -1198,7 +1230,7 @@ def auth_select_workspace(payload: dict[str, Any], request: Request) -> dict[str
     workspace_id = str(payload.get('workspace_id', '')).strip()
     if not workspace_id:
         raise HTTPException(status_code=400, detail='workspace_id is required')
-    return {'user': select_workspace_for_user(workspace_id, request)}
+    return with_auth_schema_json(lambda: {'user': select_workspace_for_user(workspace_id, request)})
 
 
 @app.get('/pilot/history', summary='Workspace-scoped persisted live-mode history')
