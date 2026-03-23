@@ -1,10 +1,13 @@
-import PreviewDeploymentNotice from '../preview-deployment-notice';
+import { headers } from 'next/headers';
+
+import { getBuildInfo } from '../build-info';
 import SignUpPageClient from './sign-up-page-client';
 
 export const dynamic = 'force-dynamic';
 
 export default function SignUpPage() {
-  const isPreviewDeployment = process.env.VERCEL_ENV === 'preview';
+  const requestHeaders = headers();
+  const currentHost = requestHeaders.get('x-forwarded-host') ?? requestHeaders.get('host');
 
-  return <SignUpPageClient previewNotice={isPreviewDeployment ? <PreviewDeploymentNotice /> : null} />;
+  return <SignUpPageClient initialBuildInfo={getBuildInfo(process.env, currentHost)} />;
 }

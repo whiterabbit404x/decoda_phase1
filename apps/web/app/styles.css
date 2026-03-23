@@ -616,6 +616,48 @@ td .tableMeta {
 }
 
 
+
+.authHero {
+  display: grid;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.buildBadge {
+  padding: 1rem 1.1rem;
+  border-radius: 18px;
+  border: 1px solid rgba(106, 169, 255, 0.32);
+  background: linear-gradient(180deg, rgba(19, 27, 48, 0.96), rgba(9, 14, 26, 0.94));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.22);
+}
+
+.buildBadgeCompact {
+  margin-bottom: 1rem;
+}
+
+.buildBadgeGrid {
+  margin-top: 0.75rem;
+}
+
+.buildVersionInline,
+.buildVersionLine {
+  margin: 0.35rem 0 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fbbf24;
+}
+
+.previewDeploymentWarning {
+  border-width: 2px;
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.18);
+}
+
+@media (min-width: 900px) {
+  .authHero {
+    grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
+  }
+}
+
 .authPageGrid {
   align-items: start;
   margin-top: 1.5rem;

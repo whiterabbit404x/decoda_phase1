@@ -1,10 +1,13 @@
-import PreviewDeploymentNotice from '../preview-deployment-notice';
+import { headers } from 'next/headers';
+
+import { getBuildInfo } from '../build-info';
 import SignInPageClient from './sign-in-page-client';
 
 export const dynamic = 'force-dynamic';
 
 export default function SignInPage({ searchParams }: { searchParams?: { next?: string } }) {
-  const isPreviewDeployment = process.env.VERCEL_ENV === 'preview';
+  const requestHeaders = headers();
+  const currentHost = requestHeaders.get('x-forwarded-host') ?? requestHeaders.get('host');
 
-  return <SignInPageClient nextPath={searchParams?.next} previewNotice={isPreviewDeployment ? <PreviewDeploymentNotice /> : null} />;
+  return <SignInPageClient nextPath={searchParams?.next} initialBuildInfo={getBuildInfo(process.env, currentHost)} />;
 }

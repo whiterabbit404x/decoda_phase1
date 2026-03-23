@@ -1,11 +1,13 @@
 export default function PreviewDeploymentNotice() {
   return (
-    <aside className="dataCard previewDeploymentNotice" role="note" aria-live="polite">
+    <aside className="dataCard previewDeploymentNotice" role="alert" aria-live="polite">
       <p className="eyebrow">Preview deployment</p>
-      <h2>Preview environment detected</h2>
+      <h2>Deployment-specific preview URL</h2>
       <p>
-        This Vercel preview build uses deployment-specific runtime config. If sign-in or sign-up fails here while production still works,
-        check <a href="/api/build-info">/api/build-info</a> first to confirm the branch, commit, live-mode flag, and backend API URL resolved for this preview.
+        Preview URLs are deployment-specific, and old preview URLs may not reflect the latest source even when the branch name looks familiar.
+      </p>
+      <p>
+        Compare the commit SHA on this page with <a href="/api/build-info">/api/build-info</a> before debugging auth behavior.
       </p>
     </aside>
   );
