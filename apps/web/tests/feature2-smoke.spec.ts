@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('localhost:3000 renders the Feature 2 dashboard section without a fatal crash', async ({ page }) => {
+test('localhost:3000/threat renders customer-facing threat analysis workflow', async ({ page }) => {
   const consoleErrors: string[] = [];
 
   page.on('pageerror', (error) => {
@@ -13,12 +13,23 @@ test('localhost:3000 renders the Feature 2 dashboard section without a fatal cra
     }
   });
 
-  const response = await page.goto('/', { waitUntil: 'networkidle' });
+  const response = await page.goto('/threat', { waitUntil: 'networkidle' });
 
   expect(response?.ok()).toBeTruthy();
-  await expect(page.locator('h1')).toHaveText('Risk control for tokenized treasuries and real-world assets.');
-  await expect(page.locator('text=Request demo')).toBeVisible();
-  await expect(page.locator('text=Start pilot')).toBeVisible();
+  await expect(page.locator('h3', { hasText: 'Threat analysis workspace' })).toBeVisible();
+  await expect(page.locator('text=Scenario library')).toBeVisible();
+  await expect(page.locator('text=Run analysis')).toBeVisible();
+  await expect(page.locator('text=Decision output')).toBeVisible();
+
+  await expect(page.locator('text=Decision summary')).toBeVisible();
+  await expect(page.locator('text=Why this decision happened')).toBeVisible();
+  await expect(page.locator('text=Recommended operator action')).toBeVisible();
+
+  await expect(page.getByRole('button', { name: 'Copy summary' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy JSON' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open history' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Run again' })).toBeVisible();
+
   await expect(page.locator('body')).not.toContainText('Application error');
   await expect(page.locator('body')).not.toContainText('Unhandled Runtime Error');
   await expect(page.locator('body')).not.toContainText('This page could not be found');
