@@ -22,20 +22,34 @@ export default async function ThreatPage() {
       <SystemStatusPanel diagnostics={data.diagnostics} dashboard={data.dashboard} />
       <section className="threeColumnSection">
         <div className="stack compactStack">
+          <div className="workflowHeader">
+            <p className="sectionEyebrow">Scenario library</p>
+            <p className="muted workflowHelp">Review active patterns and choose the threat path to evaluate.</p>
+          </div>
           {threatDashboard.active_alerts.map((alert) => (
-            <article key={alert.id} className="dataCard">
+            <article key={alert.id} className="dataCard decisionOutputCard">
               <div className="listHeader"><div><h3>{alert.title}</h3><p className="muted">{alert.category}</p></div><StatusBadge state={alert.source === 'live' ? 'live' : 'fallback'} compact /></div>
               <p className="explanation small">{alert.explanation}</p>
-              <div className="chipRow">{formatRules(alert.patterns).map((pattern) => <span key={pattern} className="ruleChip">{pattern}</span>)}</div>
+              <div className="chipRow">{formatRules(alert.patterns).slice(0, 4).map((pattern) => <span key={pattern} className="ruleChip">{pattern}</span>)}</div>
             </article>
           ))}
         </div>
         <ThreatDemoPanel apiUrl={data.apiUrl} />
         <div className="stack compactStack">
+          <div className="workflowHeader">
+            <p className="sectionEyebrow">Decision output</p>
+            <p className="muted workflowHelp">Operational outcomes generated from recent analyses.</p>
+          </div>
           {threatDashboard.recent_detections.map((detection) => (
-            <article key={detection.id} className="dataCard">
-              <div className="listHeader"><div><h3>{detection.title}</h3><p className="muted">{detection.category}</p></div><span className="severityPill high">{detection.action} · {detection.score}</span></div>
+            <article key={detection.id} className="dataCard decisionOutputCard">
+              <div className="listHeader"><div><h3>{detection.title}</h3><p className="muted">Threat class: {detection.category}</p></div><span className="severityPill high">{detection.action} · {detection.score}</span></div>
               <p className="explanation small">{detection.explanation}</p>
+              <div className="chipRow">
+                {formatRules(detection.patterns).slice(0, 4).map((pattern) => (
+                  <span key={pattern} className="ruleChip">{pattern}</span>
+                ))}
+              </div>
+              <p className="tableMeta decisionMeta">analysis type: {detection.category.toLowerCase().includes('market') ? 'market' : detection.category.toLowerCase().includes('contract') ? 'contract' : 'transaction'}</p>
             </article>
           ))}
         </div>

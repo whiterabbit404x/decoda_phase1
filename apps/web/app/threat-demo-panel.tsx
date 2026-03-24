@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
 import { usePilotAuth } from './pilot-auth-context';
@@ -211,16 +212,80 @@ const sampleRequests = {
   }
 } as const;
 
+type ScenarioKey = keyof typeof sampleRequests;
+
+type RunMeta = {
+  timestamp: string;
+  referenceId: string;
+  scenarioType: string;
+  sourceMode: 'live' | 'fallback';
+};
+
+const scenarioGroups: Array<{ title: string; helper: string; endpoint: (typeof sampleRequests)[ScenarioKey]['endpoint'] }> = [
+  { title: 'Transaction threats', helper: 'Wallet behavior and treasury transfer risk.', endpoint: 'transaction' },
+  { title: 'Market manipulation', helper: 'Venue-level anomalies and trading pattern abuse.', endpoint: 'market' },
+  { title: 'Contract risk', helper: 'Privilege paths and unsafe contract controls.', endpoint: 'contract' }
+];
+
+function toTitle(value: string) {
+  return value.replaceAll('_', ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function formatTimestamp(value: string) {
+  return new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'medium'
+  }).format(new Date(value));
+}
+
+function getScenarioCategory(endpoint: (typeof sampleRequests)[ScenarioKey]['endpoint']) {
+  if (endpoint === 'transaction') return 'transaction';
+  if (endpoint === 'market') return 'market';
+  return 'contract';
+}
+
+function buildReferenceId(timestamp: string) {
+  const date = new Date(timestamp);
+  const y = String(date.getUTCFullYear());
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  const h = String(date.getUTCHours()).padStart(2, '0');
+  const min = String(date.getUTCMinutes()).padStart(2, '0');
+  const s = String(date.getUTCSeconds()).padStart(2, '0');
+  return `THR-${y}${m}${d}-${h}${min}${s}`;
+}
+
+function getRiskDrivers(result: DemoResult, scenarioLabel: string) {
+  const explicitReasons = result.reasons.slice(0, 4);
+  if (explicitReasons.length) return explicitReasons;
+  return [`Detected controls in ${scenarioLabel} elevated the risk profile.`];
+}
+
+function getRecommendedOperatorAction(result: DemoResult, scenarioLabel: string) {
+  if (result.recommended_action === 'block') return `Escalate immediately and block ${scenarioLabel.toLowerCase()} execution until manual approval.`;
+  if (result.recommended_action === 'review') return `Queue ${scenarioLabel.toLowerCase()} for Tier-2 analyst review before release.`;
+  return `Proceed with ${scenarioLabel.toLowerCase()} while retaining this run in audit history.`;
+}
+
+function getBusinessImpact(result: DemoResult) {
+  if (result.recommended_action === 'block') return 'Potential treasury loss or governance compromise is materially reduced by immediate containment.';
+  if (result.recommended_action === 'review') return 'Additional analyst verification reduces false positives while preserving compliance controls.';
+  return 'Operational throughput remains high with low residual threat exposure.';
+}
+
 export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
   const { isAuthenticated, user, authHeaders } = usePilotAuth();
-  const [selected, setSelected] = useState<keyof typeof sampleRequests>('flash_loan_transaction');
+  const [selected, setSelected] = useState<ScenarioKey>('flash_loan_transaction');
   const [result, setResult] = useState<DemoResult | null>(null);
+  const [runMeta, setRunMeta] = useState<RunMeta | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showPayload, setShowPayload] = useState(false);
+  const [copyState, setCopyState] = useState<string | null>(null);
 
   const selectedScenario = useMemo(() => sampleRequests[selected], [selected]);
 
-  async function runScenario(key: keyof typeof sampleRequests) {
+  async function runScenario(key: ScenarioKey) {
     setSelected(key);
     setLoading(true);
     setError(null);
@@ -238,47 +303,97 @@ export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
         throw new Error(`Request failed with ${response.status}`);
       }
 
-      setResult((await response.json()) as DemoResult);
+      const responseResult = (await response.json()) as DemoResult;
+      const timestamp = new Date().toISOString();
+      setResult(responseResult);
+      setRunMeta({
+        timestamp,
+        scenarioType: toTitle(scenario.endpoint),
+        sourceMode: responseResult.source ?? 'live',
+        referenceId: buildReferenceId(timestamp)
+      });
       window.dispatchEvent(new Event('pilot-history-refresh'));
     } catch (err) {
       setResult(null);
+      setRunMeta(null);
       setError(err instanceof Error ? err.message : 'Unable to reach the threat API.');
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleCopy(kind: 'summary' | 'json') {
+    if (!result) return;
+    const summary = [
+      `Decision: ${toTitle(result.recommended_action)}`,
+      `Risk score: ${result.score}`,
+      `Severity: ${toTitle(result.severity)}`,
+      `Analysis type: ${toTitle(result.analysis_type)}`,
+      `Source: ${runMeta?.sourceMode ?? result.source ?? 'live'}`,
+      `Why: ${result.explanation}`
+    ].join('\n');
+    const payload = JSON.stringify(selectedScenario.body, null, 2);
+
+    try {
+      await navigator.clipboard.writeText(kind === 'summary' ? summary : payload);
+      setCopyState(kind === 'summary' ? 'Summary copied' : 'JSON copied');
+      window.setTimeout(() => setCopyState(null), 2000);
+    } catch {
+      setCopyState('Clipboard blocked');
+      window.setTimeout(() => setCopyState(null), 2000);
+    }
+  }
+
+  const workspaceName = user?.current_workspace?.name ?? 'Demo workspace';
+
   return (
     <div className="dataCard demoPanel">
+      <div className="workflowHeader">
+        <p className="sectionEyebrow">Run analysis</p>
+        <p className="muted workflowHelp">Threat analysis workspace for deterministic customer-facing walkthroughs.</p>
+      </div>
+
       <div className="sectionHeader compact">
         <div>
-          <h3>Feature 2 demo interactions</h3>
-          <p>Trigger sample contract, transaction, and market analyses from the browser.</p>
+          <h3>Threat analysis workspace</h3>
+          <p>Submit signal packages and produce operator-ready decisions with explainability.</p>
         </div>
         <span className="pill">{isAuthenticated && user?.current_workspace ? `Live workspace: ${user.current_workspace.name}` : 'Demo / live API'}</span>
       </div>
 
-      <div className="demoButtons">
-        {(Object.entries(sampleRequests) as Array<[keyof typeof sampleRequests, (typeof sampleRequests)[keyof typeof sampleRequests]]>).map(([key, scenario]) => (
-          <button
-            key={key}
-            type="button"
-            className={`demoButton ${selected === key ? 'demoButtonActive' : ''}`}
-            onClick={() => runScenario(key)}
-            disabled={loading}
-          >
-            {scenario.label}
-          </button>
+      <div className="scenarioGroupWrap">
+        {scenarioGroups.map((group) => (
+          <section key={group.endpoint} className="scenarioGroup">
+            <p className="label scenarioGroupTitle">{group.title}</p>
+            <p className="tableMeta scenarioGroupHelp">{group.helper}</p>
+            <div className="demoButtons">
+              {(Object.entries(sampleRequests) as Array<[ScenarioKey, (typeof sampleRequests)[ScenarioKey]]>)
+                .filter(([, scenario]) => scenario.endpoint === group.endpoint)
+                .map(([key, scenario]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`demoButton ${selected === key ? 'demoButtonActive' : ''}`}
+                    onClick={() => runScenario(key)}
+                    disabled={loading}
+                  >
+                    {scenario.label}
+                  </button>
+                ))}
+            </div>
+          </section>
         ))}
       </div>
 
-      <div className="demoPayload">
-        <p className="label">Selected request body</p>
-        <pre>{JSON.stringify(selectedScenario.body, null, 2)}</pre>
+      <div className="demoRunStrip">
+        <p><span>Scenario type</span>{getScenarioCategory(selectedScenario.endpoint)}</p>
+        <p><span>Workspace</span>{workspaceName}</p>
+        <p><span>Source mode</span>{runMeta?.sourceMode ?? result?.source ?? 'live'}</p>
+        <p><span>Last run</span>{runMeta ? formatTimestamp(runMeta.timestamp) : 'Not run yet'}</p>
       </div>
 
-      <div className="demoResult">
-        <p className="label">Analysis result</p>
+      <div className="demoResult primaryResult">
+        <p className="label">Decision summary</p>
         {loading ? (
           <p className="muted">Running deterministic threat analysis…</p>
         ) : error ? (
@@ -286,21 +401,68 @@ export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
         ) : result ? (
           <>
             <div className="chipRow">
-              <span className={`severityPill ${result.severity}`}>{result.severity}</span>
-              <span className={`severityPill ${result.recommended_action}`}>{result.recommended_action}</span>
-              <span className="ruleChip">score {result.score}</span>
-              <span className="ruleChip">{result.source ?? 'live'}</span>
+              <span className={`severityPill ${result.recommended_action}`}>{toTitle(result.recommended_action)}</span>
+              <span className={`severityPill ${result.severity}`}>Severity: {toTitle(result.severity)}</span>
+              <span className="ruleChip">Risk score {result.score}</span>
+              <span className="ruleChip">{runMeta?.sourceMode ?? result.source ?? 'live'}</span>
             </div>
             <p className="explanation small">{result.explanation}</p>
-            <ul className="demoReasonList">
-              {result.reasons.map((reason) => (
-                <li key={reason}>{reason}</li>
-              ))}
-            </ul>
+
+            <div className="explainabilityGrid">
+              <article className="explainabilityCard">
+                <p className="label">Why this decision happened</p>
+                <p>{result.explanation}</p>
+              </article>
+              <article className="explainabilityCard">
+                <p className="label">Top risk drivers</p>
+                <ul className="demoReasonList">
+                  {getRiskDrivers(result, selectedScenario.label).map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </article>
+              <article className="explainabilityCard">
+                <p className="label">Recommended operator action</p>
+                <p>{getRecommendedOperatorAction(result, selectedScenario.label)}</p>
+              </article>
+              <article className="explainabilityCard">
+                <p className="label">Business impact</p>
+                <p>{getBusinessImpact(result)}</p>
+              </article>
+            </div>
+
+            <div className="auditMetaGrid">
+              <p><span>Analysis time</span>{runMeta ? formatTimestamp(runMeta.timestamp) : 'Not available'}</p>
+              <p><span>Workspace name</span>{workspaceName}</p>
+              <p><span>Analysis type</span>{toTitle(result.analysis_type)}</p>
+              <p><span>Source</span>{runMeta?.sourceMode ?? result.source ?? 'live'}</p>
+              <p><span>Dependency state</span>{result.degraded ? 'degraded' : 'normal'}</p>
+              <p><span>Reference ID</span>{runMeta?.referenceId ?? 'Generated on run'}</p>
+            </div>
+
+            <div className="quickActionsRow">
+              <button type="button" onClick={() => handleCopy('summary')}>Copy summary</button>
+              <button type="button" onClick={() => handleCopy('json')}>Copy JSON</button>
+              <Link href="/history">Open history</Link>
+              <button type="button" onClick={() => runScenario(selected)}>Run again</button>
+              {copyState ? <span className="tableMeta">{copyState}</span> : null}
+            </div>
           </>
         ) : (
           <p className="muted">Choose a scenario to see allow / review / block output.</p>
         )}
+      </div>
+
+      <div className="demoPayload secondaryResult">
+        <button type="button" className="payloadToggle" onClick={() => setShowPayload((prev) => !prev)}>
+          {showPayload ? 'Hide submitted signal package' : 'Show submitted signal package'}
+        </button>
+        {showPayload ? (
+          <>
+            <p className="label">Submitted signal package</p>
+            <pre>{JSON.stringify(selectedScenario.body, null, 2)}</pre>
+          </>
+        ) : null}
       </div>
     </div>
   );
