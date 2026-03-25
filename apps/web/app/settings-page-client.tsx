@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { usePilotAuth } from './pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function SettingsPageClient() {
   const { apiUrl, authHeaders, error, liveModeConfigured, loading, selectWorkspace, user } = usePilotAuth();

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
-import { usePilotAuth } from './pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 type DemoPanelProps = {
   apiUrl: string;

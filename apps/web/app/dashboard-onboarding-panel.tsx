@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useMemo } from 'react';
 
-import { usePilotAuth } from './pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function DashboardOnboardingPanel({ liveApiReachable }: { liveApiReachable: boolean }) {
   const { user } = usePilotAuth();

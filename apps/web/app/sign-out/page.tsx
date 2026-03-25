@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 
-import { usePilotAuth } from '../pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function SignOutPage() {
   const { signOut } = usePilotAuth();

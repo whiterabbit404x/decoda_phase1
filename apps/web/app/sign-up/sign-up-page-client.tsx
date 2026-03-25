@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import AuthBuildBadge from '../auth-build-badge';
 import AuthDiagnosticCard from '../auth-diagnostic-card';
 import { resolveAuthFormState } from '../auth-form-state';
-import { usePilotAuth } from '../pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function SignUpPageClient({ previewNotice }: { previewNotice?: React.ReactNode }) {
   const router = useRouter();

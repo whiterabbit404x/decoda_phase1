@@ -1,4 +1,4 @@
-import { dynamic, proxyAuthRequest, revalidate } from '../_shared/proxy';
+import { dynamic, proxyAuthRequest, revalidate } from 'app/api/auth/_shared/proxy';
 
 export { dynamic, revalidate };
 

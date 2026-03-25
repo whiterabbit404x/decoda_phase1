@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-import { PilotAuthProvider } from './pilot-auth-context';
+import { PilotAuthProvider } from 'app/pilot-auth-context';
 import './styles.css';
 
 export const metadata: Metadata = {

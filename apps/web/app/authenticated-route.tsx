@@ -3,7 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect } from 'react';
 
-import { usePilotAuth } from './pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function AuthenticatedRoute({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
