@@ -9,7 +9,7 @@ import type {
   ThreatDashboardResponse,
 } from './dashboard-data';
 import { formatSourceLabel, statusTone } from './dashboard-data';
-import { usePilotAuth } from './pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 type BackendState = 'online' | 'degraded' | 'offline';
 

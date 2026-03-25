@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { usePilotAuth } from './pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 type HistoryPayload = {
   workspace: { id: string; name: string; slug: string };

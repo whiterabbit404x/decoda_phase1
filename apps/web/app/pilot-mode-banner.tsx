@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { usePilotAuth } from './pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function PilotModeBanner() {
   const { liveModeConfigured, isAuthenticated, user, loading, signOut } = usePilotAuth();

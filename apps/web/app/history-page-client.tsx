@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 
 import HistoryRecordsView from './history-records-view';
 import { HistoryPayload } from './pilot-history';
-import { usePilotAuth } from './pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function HistoryPageClient() {
   const { apiUrl, authHeaders, isAuthenticated, loading, selectWorkspace, user } = usePilotAuth();

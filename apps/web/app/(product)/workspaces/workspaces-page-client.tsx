@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-import { usePilotAuth } from '../../pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function WorkspacesPageClient() {
   const router = useRouter();

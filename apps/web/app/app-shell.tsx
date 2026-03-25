@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 
 import AppNavigation from './app-navigation';
-import { usePilotAuth } from './pilot-auth-context';
+import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
