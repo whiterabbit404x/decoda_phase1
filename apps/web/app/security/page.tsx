@@ -1,0 +1,1 @@
+export default function SecurityPage() { return <main className="container"><section className="dataCard"><h1>Security / Trust</h1><p>We apply least-privilege access, encrypted transit, and audit logging controls. Contact us for current security documentation.</p></section></main>; }

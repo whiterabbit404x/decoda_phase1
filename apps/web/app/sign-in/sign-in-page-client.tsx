@@ -11,9 +11,11 @@ import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function SignInPageClient({
   nextPath,
+  verificationState,
   previewNotice,
 }: {
   nextPath?: string;
+  verificationState?: string;
   previewNotice?: React.ReactNode;
 }) {
   const router = useRouter();
@@ -80,6 +82,7 @@ export default function SignInPageClient({
       {formState.statusMessage ? <p className="statusLine">{formState.statusMessage}</p> : null}
       {formState.deploymentWarning ? <p className="statusLine">{formState.deploymentWarning}</p> : null}
       {nextPath ? <p className="muted">Sign in to continue to {nextPath}.</p> : null}
+      {verificationState === 'pending' ? <p className="statusLine">Account created. Check your inbox and verify your email before signing in.</p> : null}
       {previewNotice}
       <div className="twoColumnSection authPageGrid">
         <form className="dataCard authForm" onSubmit={handleSubmit}>
@@ -91,6 +94,7 @@ export default function SignInPageClient({
           {error ? <p className="statusLine">{error}</p> : null}
           {!configLoading && !configured ? <p className="statusLine">Auth is disabled until this deployment exposes a valid API_URL.</p> : null}
           <p className="muted">Need an account? <Link href="/sign-up">Create one</Link>.</p>
+          <p className="muted"><Link href="/forgot-password">Forgot password?</Link></p>
         </form>
         <AuthDiagnosticCard loading={configLoading} runtimeConfig={runtimeConfig} />
       </div>

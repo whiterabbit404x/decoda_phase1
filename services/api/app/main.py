@@ -31,9 +31,12 @@ from services.api.app.pilot import (
     create_governance_action_record,
     create_incident_record,
     create_workspace_for_user,
+    create_workspace_invite,
+    create_billing_checkout_session,
     enforce_auth_rate_limit,
     ensure_pilot_schema,
     list_user_workspaces,
+    list_workspace_members,
     live_mode_enabled,
     log_audit,
     maybe_insert_alert,
@@ -50,6 +53,14 @@ from services.api.app.pilot import (
     signin_user,
     signout_user,
     signup_user,
+    verify_email_token,
+    resend_verification,
+    forgot_password,
+    reset_password,
+    accept_workspace_invite,
+    update_workspace_member_role,
+    remove_workspace_member,
+    billing_status,
 )
 
 
@@ -1236,6 +1247,29 @@ def auth_signin(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     return with_auth_schema_json(lambda: signin_user(payload, request))
 
 
+@app.post('/auth/verify-email', summary='Verify email token for a live-mode user')
+def auth_verify_email(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: verify_email_token(payload, request))
+
+
+@app.post('/auth/resend-verification', summary='Resend email verification')
+def auth_resend_verification(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    enforce_auth_rate_limit(request, 'resend-verification')
+    return with_auth_schema_json(lambda: resend_verification(payload, request))
+
+
+@app.post('/auth/forgot-password', summary='Request a password reset link')
+def auth_forgot_password(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    enforce_auth_rate_limit(request, 'forgot-password')
+    return with_auth_schema_json(lambda: forgot_password(payload, request))
+
+
+@app.post('/auth/reset-password', summary='Reset password using token')
+def auth_reset_password(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    enforce_auth_rate_limit(request, 'reset-password')
+    return with_auth_schema_json(lambda: reset_password(payload, request))
+
+
 @app.post('/auth/signout', summary='Sign out a live-mode pilot user')
 def auth_signout(request: Request) -> dict[str, Any]:
     return with_auth_schema_json(lambda: signout_user(request))
@@ -1249,6 +1283,31 @@ def auth_me(request: Request) -> dict[str, Any]:
 @app.get('/workspaces', summary='List workspaces for the authenticated user')
 def workspaces(request: Request) -> dict[str, Any]:
     return with_auth_schema_json(lambda: list_user_workspaces(request))
+
+
+@app.get('/workspaces/members', summary='List members for the active workspace')
+def workspaces_members(request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: list_workspace_members(request))
+
+
+@app.post('/workspaces/invites', summary='Invite a teammate into the active workspace')
+def workspaces_invites(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: create_workspace_invite(payload, request))
+
+
+@app.post('/workspaces/invites/accept', summary='Accept a workspace invite')
+def workspaces_invites_accept(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: accept_workspace_invite(payload, request))
+
+
+@app.post('/workspaces/members/{member_user_id}/role', summary='Update member role')
+def workspace_member_role(member_user_id: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: update_workspace_member_role(member_user_id, payload, request))
+
+
+@app.delete('/workspaces/members/{member_user_id}', summary='Remove member from workspace')
+def workspace_member_delete(member_user_id: str, request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: remove_workspace_member(member_user_id, request))
 
 
 @app.post('/workspaces', summary='Create a workspace for the authenticated user')
@@ -1267,6 +1326,16 @@ def auth_select_workspace(payload: dict[str, Any], request: Request) -> dict[str
 @app.get('/pilot/history', summary='Workspace-scoped persisted live-mode history')
 def pilot_history(request: Request, limit: int = 25) -> dict[str, Any]:
     return with_auth_schema_json(lambda: build_history_response(request, limit=limit))
+
+
+@app.get('/billing/status', summary='Workspace billing status')
+def billing_status_route(request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: billing_status(request))
+
+
+@app.post('/billing/checkout-session', summary='Create Stripe checkout session')
+def billing_checkout_route(request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: create_billing_checkout_session(request))
 
 
 def _persist_live_analysis(request: Request, payload: dict[str, Any], response_payload: dict[str, Any], *, analysis_type: str, service_name: str, title: str) -> dict[str, Any]:

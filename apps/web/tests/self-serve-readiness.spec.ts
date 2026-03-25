@@ -14,6 +14,9 @@ test('auth pages include guarded submit and authenticated redirect handling', as
   const signUp = read('sign-up/sign-up-page-client.tsx');
   const signInPage = read('sign-in/page.tsx');
   const signUpPage = read('sign-up/page.tsx');
+  const forgotPassword = read('forgot-password/page.tsx');
+  const resetPassword = read('reset-password/page.tsx');
+  const verifyEmail = read('verify-email/page.tsx');
 
   expect(signIn).toContain('if (loading) {');
   expect(signIn).toContain('setError(null);');
@@ -23,6 +26,10 @@ test('auth pages include guarded submit and authenticated redirect handling', as
   expect(signUp).toContain("router.replace('/dashboard')");
   expect(signInPage).toContain("redirect('/dashboard')");
   expect(signUpPage).toContain("redirect('/dashboard')");
+  expect(signIn).toContain('/forgot-password');
+  expect(forgotPassword).toContain('forgotPassword(email)');
+  expect(resetPassword).toContain('resetPassword(token, password)');
+  expect(verifyEmail).toContain('verifyEmail(token)');
 });
 
 test('authenticated route guards unauthenticated and missing-workspace users', async () => {
@@ -47,6 +54,20 @@ test('dashboard and history expose self-serve onboarding and first-run empty sta
   expect(history).toContain('No analyses yet');
   expect(history).toContain('history.workspace.name');
   expect(history).toContain('item.status');
+});
+
+test('team, billing, and legal routes are wired for self-serve foundations', async () => {
+  const nav = read('product-nav.ts');
+  const appShell = read('app-shell.tsx');
+  const team = read('(product)/team/page.tsx');
+  const billing = read('(product)/billing/page.tsx');
+
+  expect(nav).toContain("{ href: '/team', label: 'Team' }");
+  expect(nav).toContain("{ href: '/billing', label: 'Billing' }");
+  expect(appShell).toContain("href=\"/privacy\"");
+  expect(appShell).toContain("href=\"/terms\"");
+  expect(team).toContain('/api/auth/team-invites');
+  expect(billing).toContain('/api/auth/billing-status');
 });
 
 test('auth context and threat workflow guard session and workspace edge cases', async () => {

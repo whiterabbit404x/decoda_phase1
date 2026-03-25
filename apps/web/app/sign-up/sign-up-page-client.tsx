@@ -55,7 +55,7 @@ export default function SignUpPageClient({ previewNotice }: { previewNotice?: Re
     setError(null);
     try {
       await signUp({ email, password, full_name: fullName, workspace_name: workspaceName });
-      router.push('/dashboard');
+      router.push('/sign-in?verified=pending');
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : String(submitError));
     } finally {
