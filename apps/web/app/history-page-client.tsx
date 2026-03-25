@@ -11,6 +11,7 @@ export default function HistoryPageClient() {
   const [history, setHistory] = useState<HistoryPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
+  const [workspaceActionLoading, setWorkspaceActionLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -18,6 +19,7 @@ export default function HistoryPageClient() {
     async function loadHistory() {
       if (!isAuthenticated || !user?.current_workspace?.id) {
         setHistory(null);
+        setFetching(false);
         return;
       }
       setFetching(true);
@@ -61,8 +63,11 @@ export default function HistoryPageClient() {
           Active workspace
           <select
             value={user?.current_workspace?.id ?? ''}
-            onChange={(event) => void selectWorkspace(event.target.value)}
-            disabled={loading || !user?.memberships?.length}
+            onChange={(event) => {
+              setWorkspaceActionLoading(true);
+              void selectWorkspace(event.target.value).finally(() => setWorkspaceActionLoading(false));
+            }}
+            disabled={loading || workspaceActionLoading || !user?.memberships?.length}
           >
             {(user?.memberships ?? []).map((membership) => (
               <option key={membership.workspace_id} value={membership.workspace_id}>{membership.workspace.name}</option>
@@ -70,6 +75,12 @@ export default function HistoryPageClient() {
           </select>
         </label>
       </div>
+      {!user?.current_workspace ? (
+        <section className="emptyStatePanel">
+          <h2>Select a workspace to view history</h2>
+          <p>No workspace is currently active for this account. Choose one above, then reload this page.</p>
+        </section>
+      ) : null}
       <HistoryRecordsView history={history} loading={fetching || loading} error={error} workspaceName={user?.current_workspace?.name} />
     </main>
   );

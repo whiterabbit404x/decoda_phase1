@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import AuthBuildBadge from '../auth-build-badge';
 import AuthDiagnosticCard from '../auth-diagnostic-card';
@@ -26,6 +26,8 @@ export default function SignInPageClient({
     runtimeConfigSource,
     signIn,
     apiUrl,
+    isAuthenticated,
+    loading: authLoading,
   } = usePilotAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -42,8 +44,17 @@ export default function SignInPageClient({
   }), [apiTimeoutMs, apiUrl, configured, liveModeEnabled, runtimeConfigDiagnostic, runtimeConfigSource]);
   const formState = resolveAuthFormState(runtimeConfig, configLoading, loading);
 
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      router.replace(nextPath ?? '/dashboard');
+    }
+  }, [authLoading, isAuthenticated, nextPath, router]);
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading) {
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -60,10 +71,10 @@ export default function SignInPageClient({
     <main className="container authPage">
       <div className="hero">
         <div>
-          <p className="eyebrow">Pilot access</p>
+          <p className="eyebrow">Secure access</p>
           <h1>Sign in to your workspace</h1>
           <AuthBuildBadge />
-          <p className="lede">Open your live pilot workspace, save operating history, and keep your team on the same company view.</p>
+          <p className="lede">Access your Decoda RWA Guard workspace to run analyses, review history, and coordinate your operations team.</p>
         </div>
       </div>
       {formState.statusMessage ? <p className="statusLine">{formState.statusMessage}</p> : null}

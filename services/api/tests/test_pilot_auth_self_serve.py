@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+import uuid
+
+import pytest
+from fastapi import HTTPException, Request
+
+PILOT_PATH = Path(__file__).resolve().parents[1] / 'app' / 'pilot.py'
+
+
+@pytest.fixture(scope='module')
+def pilot_module():
+    spec = importlib.util.spec_from_file_location('pilot_self_serve', PILOT_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError('Unable to load pilot.py for self-serve auth tests.')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _request() -> Request:
+    return Request({'type': 'http', 'headers': []})
+
+
+def test_signup_success_returns_token_and_user(pilot_module, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Result:
+        def __init__(self, row=None):
+            self._row = row
+
+        def fetchone(self):
+            return self._row
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            if 'SELECT id FROM users WHERE email' in statement:
+                return _Result(None)
+            if 'SELECT 1 FROM workspaces WHERE slug' in statement:
+                return _Result(None)
+            return _Result(None)
+
+        def commit(self):
+            return None
+
+    @contextmanager
+    def fake_pg():
+        yield _Connection()
+
+    monkeypatch.setattr(pilot_module, 'require_live_mode', lambda: None)
+    monkeypatch.setattr(pilot_module, 'pg_connection', fake_pg)
+    monkeypatch.setattr(pilot_module, 'ensure_pilot_schema', lambda connection: None)
+    monkeypatch.setattr(pilot_module, 'hash_password', lambda password: 'hashed-value')
+    monkeypatch.setattr(pilot_module, 'build_user_response', lambda connection, user_id: {'id': user_id, 'current_workspace': {'id': 'ws-1'}})
+    monkeypatch.setattr(pilot_module, 'log_audit', lambda *args, **kwargs: None)
+    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id: f'token-{user_id}')
+
+    response = pilot_module.signup_user(
+        {
+            'email': 'team@example.com',
+            'password': 'StrongPass1234',
+            'full_name': 'Team Owner',
+            'workspace_name': 'Treasury Ops',
+        },
+        _request(),
+    )
+
+    assert response['token_type'] == 'bearer'
+    assert response['access_token'].startswith('token-')
+    assert response['user']['current_workspace']['id'] == 'ws-1'
+
+
+def test_signup_duplicate_returns_conflict(pilot_module, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Result:
+        def __init__(self, row=None):
+            self._row = row
+
+        def fetchone(self):
+            return self._row
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            if 'SELECT id FROM users WHERE email' in statement:
+                return _Result({'id': 'existing-user'})
+            return _Result(None)
+
+    @contextmanager
+    def fake_pg():
+        yield _Connection()
+
+    monkeypatch.setattr(pilot_module, 'require_live_mode', lambda: None)
+    monkeypatch.setattr(pilot_module, 'pg_connection', fake_pg)
+    monkeypatch.setattr(pilot_module, 'ensure_pilot_schema', lambda connection: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        pilot_module.signup_user({'email': 'team@example.com', 'password': 'StrongPass1234'}, _request())
+
+    assert exc_info.value.status_code == 409
+
+
+def test_signin_success_returns_hydrated_user(pilot_module, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Result:
+        def __init__(self, row=None):
+            self._row = row
+
+        def fetchone(self):
+            return self._row
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            if 'SELECT id, password_hash FROM users WHERE email' in statement:
+                return _Result({'id': 'user-1', 'password_hash': 'stored'})
+            return _Result(None)
+
+        def commit(self):
+            return None
+
+    @contextmanager
+    def fake_pg():
+        yield _Connection()
+
+    monkeypatch.setattr(pilot_module, 'require_live_mode', lambda: None)
+    monkeypatch.setattr(pilot_module, 'pg_connection', fake_pg)
+    monkeypatch.setattr(pilot_module, 'ensure_pilot_schema', lambda connection: None)
+    monkeypatch.setattr(pilot_module, 'verify_password', lambda password, encoded: True)
+    monkeypatch.setattr(pilot_module, 'build_user_response', lambda connection, user_id: {'id': user_id, 'current_workspace': None})
+    monkeypatch.setattr(pilot_module, 'log_audit', lambda *args, **kwargs: None)
+    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id: f'token-{user_id}')
+
+    response = pilot_module.signin_user({'email': 'team@example.com', 'password': 'StrongPass1234'}, _request())
+
+    assert response['token_type'] == 'bearer'
+    assert response['user']['id'] == 'user-1'
+    assert response['user']['current_workspace'] is None
+
+
+def test_signin_invalid_credentials_returns_401(pilot_module, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Result:
+        def __init__(self, row=None):
+            self._row = row
+
+        def fetchone(self):
+            return self._row
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            if 'SELECT id, password_hash FROM users WHERE email' in statement:
+                return _Result({'id': 'user-1', 'password_hash': 'stored'})
+            return _Result(None)
+
+    @contextmanager
+    def fake_pg():
+        yield _Connection()
+
+    monkeypatch.setattr(pilot_module, 'require_live_mode', lambda: None)
+    monkeypatch.setattr(pilot_module, 'pg_connection', fake_pg)
+    monkeypatch.setattr(pilot_module, 'ensure_pilot_schema', lambda connection: None)
+    monkeypatch.setattr(pilot_module, 'verify_password', lambda password, encoded: False)
+
+    with pytest.raises(HTTPException) as exc_info:
+        pilot_module.signin_user({'email': 'team@example.com', 'password': 'StrongPass1234'}, _request())
+
+    assert exc_info.value.status_code == 401
+
+
+def test_json_safe_value_serializes_uuid_and_datetime(pilot_module) -> None:
+    payload = {
+        'id': uuid.uuid4(),
+        'created_at': datetime(2026, 3, 24, 0, 0, tzinfo=timezone.utc),
+    }
+
+    serialized = pilot_module._json_safe_value(payload)
+    json.loads(json.dumps(serialized))
+    assert isinstance(serialized['id'], str)
+    assert serialized['created_at'].endswith('+00:00')

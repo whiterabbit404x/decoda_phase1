@@ -300,7 +300,8 @@ export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
       });
 
       if (!response.ok) {
-        throw new Error(`Request failed with ${response.status}`);
+        const payload = (await response.json().catch(() => ({ detail: null }))) as { detail?: string | null };
+        throw new Error(payload.detail ?? `Request failed with ${response.status}`);
       }
 
       const responseResult = (await response.json()) as DemoResult;
@@ -312,11 +313,12 @@ export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
         sourceMode: responseResult.source ?? 'live',
         referenceId: buildReferenceId(timestamp)
       });
+      window.localStorage.setItem('decoda-first-analysis-run-at', timestamp);
       window.dispatchEvent(new Event('pilot-history-refresh'));
     } catch (err) {
       setResult(null);
       setRunMeta(null);
-      setError(err instanceof Error ? err.message : 'Unable to reach the threat API.');
+      setError(err instanceof Error ? err.message : 'Unable to complete threat analysis right now.');
     } finally {
       setLoading(false);
     }
@@ -344,13 +346,13 @@ export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
     }
   }
 
-  const workspaceName = user?.current_workspace?.name ?? 'Demo workspace';
+  const workspaceName = user?.current_workspace?.name ?? 'Workspace not selected';
 
   return (
     <div className="dataCard demoPanel">
       <div className="workflowHeader">
         <p className="sectionEyebrow">Run analysis</p>
-        <p className="muted workflowHelp">Threat analysis workspace for deterministic customer-facing walkthroughs.</p>
+        <p className="muted workflowHelp">Choose a scenario and run a threat analysis to generate a clear decision record.</p>
       </div>
 
       <div className="sectionHeader compact">
@@ -358,7 +360,7 @@ export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
           <h3>Threat analysis workspace</h3>
           <p>Submit signal packages and produce operator-ready decisions with explainability.</p>
         </div>
-        <span className="pill">{isAuthenticated && user?.current_workspace ? `Live workspace: ${user.current_workspace.name}` : 'Demo / live API'}</span>
+        <span className="pill">{isAuthenticated && user?.current_workspace ? `Live workspace: ${user.current_workspace.name}` : 'Workspace setup required for persisted runs'}</span>
       </div>
 
       <div className="scenarioGroupWrap">
@@ -397,7 +399,7 @@ export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
         {loading ? (
           <p className="muted">Running deterministic threat analysis…</p>
         ) : error ? (
-          <p className="banner banner-offline">Demo call failed: {error}</p>
+          <p className="banner banner-offline">Analysis failed: {error}</p>
         ) : result ? (
           <>
             <div className="chipRow">
@@ -449,7 +451,7 @@ export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
             </div>
           </>
         ) : (
-          <p className="muted">Choose a scenario to see allow / review / block output.</p>
+          <p className="muted">Choose a scenario to see what happened, why it matters, and what to do next.</p>
         )}
       </div>
 

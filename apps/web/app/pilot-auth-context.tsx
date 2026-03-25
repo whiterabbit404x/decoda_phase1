@@ -50,6 +50,7 @@ export type PilotUser = {
   id: string;
   email: string;
   full_name: string;
+  current_workspace_id: string | null;
   created_at: string;
   updated_at: string;
   last_sign_in_at: string | null;
@@ -182,7 +183,7 @@ export function PilotAuthProvider({ children }: { children: React.ReactNode }) {
       writeTokenCookie(null);
       setToken(null);
       setUser(null);
-      setError(data.detail ?? 'Your session expired. Please sign in again.');
+      setError(response.status === 401 ? 'Your session expired. Please sign in again.' : (data.detail ?? 'Unable to restore your session. Please sign in again.'));
       setSessionLoading(false);
       return null;
     }

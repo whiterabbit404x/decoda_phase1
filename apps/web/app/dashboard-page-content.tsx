@@ -1,4 +1,5 @@
 import ComplianceDemoPanel from './compliance-demo-panel';
+import DashboardOnboardingPanel from './dashboard-onboarding-panel';
 import PilotHistoryPanel from './pilot-history-panel';
 import PilotModeBanner from './pilot-mode-banner';
 import PilotOverviewPanel from './pilot-overview-panel';
@@ -37,7 +38,7 @@ export default function DashboardPageContent({ data, gatewayReachableOverride = 
         <div>
           <p className="eyebrow">Authenticated product workspace</p>
           <h1>Tokenized treasury control dashboard</h1>
-          <p className="lede">A customer-ready operating surface for threat monitoring, compliance governance, and resilience workflows—while preserving graceful fallback behavior whenever a live dependency fails.</p>
+          <p className="lede">A production-ready operating surface for threat monitoring, compliance governance, and resilience workflows with graceful fallback when live dependencies degrade.</p>
           <div className="heroActionRow">
             <StatusBadge state={diagnostics.experienceState === 'live_degraded' ? 'live_degraded' : diagnostics.experienceState} />
             <span className="ruleChip">Gateway: {diagnostics.endpoints.dashboard.ok ? 'reachable' : 'needs attention'}</span>
@@ -52,6 +53,7 @@ export default function DashboardPageContent({ data, gatewayReachableOverride = 
       </section>
 
       <PilotModeBanner />
+      <DashboardOnboardingPanel liveApiReachable={diagnostics.endpoints.dashboard.ok} />
       <SystemStatusPanel diagnostics={diagnostics} dashboard={data.dashboard} />
 
       <PilotOverviewPanel
