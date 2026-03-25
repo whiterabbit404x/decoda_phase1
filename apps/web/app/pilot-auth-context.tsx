@@ -73,7 +73,7 @@ type PilotAuthContextValue = {
   runtimeConfigSource: RuntimeConfig['source'];
   isAuthenticated: boolean;
   signIn: (payload: { email: string; password: string }) => Promise<PilotUser>;
-  signUp: (payload: { email: string; password: string; full_name: string; workspace_name: string }) => Promise<PilotUser>;
+  signUp: (payload: { email: string; password: string; full_name: string; workspace_name: string }) => Promise<{ user: PilotUser | null; verificationRequired: boolean }>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<PilotUser | null>;
   createWorkspace: (name: string) => Promise<PilotUser>;
@@ -326,17 +326,31 @@ export function PilotAuthProvider({ children }: { children: React.ReactNode }) {
     const data = await readApiResponse<{
       access_token?: string;
       user?: PilotUser;
+      verification_required?: boolean;
       detail?: string;
       authTransport?: string;
       backendApiUrl?: string | null;
       configured?: boolean;
       code?: string;
     }>(response);
-    if (!response.ok || !data.access_token || !data.user) {
+    if (!response.ok) {
+      throw new Error(classifyAuthResponseError('create an account', proxyUrl, response.status, data.detail, data));
+    }
+
+    if (data.verification_required) {
+      window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      writeTokenCookie(null);
+      setToken(null);
+      setUser(null);
+      setError('Account created. Verify your email before signing in.');
+      return { user: null, verificationRequired: true };
+    }
+
+    if (!data.access_token || !data.user) {
       throw new Error(classifyAuthResponseError('create an account', proxyUrl, response.status, data.detail, data));
     }
     saveAuthPayload(data.access_token, data.user);
-    return data.user;
+    return { user: data.user, verificationRequired: false };
   }, [saveAuthPayload]);
 
   const signOut = useCallback(async () => {
