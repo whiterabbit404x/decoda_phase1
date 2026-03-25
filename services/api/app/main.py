@@ -32,6 +32,7 @@ from services.api.app.pilot import (
     create_incident_record,
     create_workspace_for_user,
     enforce_auth_rate_limit,
+    ensure_pilot_schema,
     list_user_workspaces,
     live_mode_enabled,
     log_audit,
@@ -267,6 +268,10 @@ ALLOWED_ORIGINS = parse_csv_env('CORS_ALLOWED_ORIGINS', [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 ])
+
+
+def masked_database_url() -> str | None:
+    return '[configured]' if database_url() else None
 
 
 def resolve_runtime_marker() -> str:
@@ -991,7 +996,8 @@ def health() -> dict[str, object]:
         'service': SERVICE_NAME,
         'port': PORT,
         'app_mode': os.getenv('APP_MODE', 'local'),
-        'database_url': database_url(),
+        'database_url': masked_database_url(),
+        'database_url_configured': database_url() is not None,
         'redis_enabled': os.getenv('REDIS_ENABLED', 'false').lower() == 'true',
         'risk_engine_url': RISK_ENGINE_URL,
         'threat_engine_url': THREAT_ENGINE_URL,
@@ -1048,7 +1054,7 @@ def services() -> dict[str, object]:
     payload = dashboard_payload()
     return {
         'mode': payload['mode'],
-        'database_url': payload['database_url'],
+        'database_url': masked_database_url(),
         'services': payload['services'],
     }
 
@@ -1057,7 +1063,9 @@ def services() -> dict[str, object]:
 def dashboard() -> dict[str, object]:
     seed_service(SERVICE_NAME, PORT, DETAIL, DEFAULT_METRICS)
     seed_embedded_dependency_registry()
-    return dashboard_payload()
+    payload = dict(dashboard_payload())
+    payload['database_url'] = masked_database_url()
+    return payload
 
 
 @app.get('/risk/dashboard', summary='Dashboard risk feed', description='Builds the dashboard transaction queue from live risk-engine evaluations and falls back to explicit demo-safe records when the risk-engine is unavailable.')
@@ -1258,7 +1266,7 @@ def auth_select_workspace(payload: dict[str, Any], request: Request) -> dict[str
 
 @app.get('/pilot/history', summary='Workspace-scoped persisted live-mode history')
 def pilot_history(request: Request, limit: int = 25) -> dict[str, Any]:
-    return build_history_response(request, limit=limit)
+    return with_auth_schema_json(lambda: build_history_response(request, limit=limit))
 
 
 def _persist_live_analysis(request: Request, payload: dict[str, Any], response_payload: dict[str, Any], *, analysis_type: str, service_name: str, title: str) -> dict[str, Any]:
@@ -1267,6 +1275,7 @@ def _persist_live_analysis(request: Request, payload: dict[str, Any], response_p
     if 'authorization' not in request.headers:
         raise HTTPException(status_code=401, detail='Authorization is required for live pilot actions.')
     with pg_connection() as connection:
+        ensure_pilot_schema(connection)
         user = authenticate_with_connection(connection, request)
         workspace_context = resolve_workspace(connection, user['id'], request.headers.get('x-workspace-id'))
         analysis_run_id = persist_analysis_run(

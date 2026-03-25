@@ -222,3 +222,83 @@ def test_build_user_response_backfills_null_current_workspace_from_membership(
     assert payload['current_workspace_id'] == 'ws-1'
     assert payload['current_workspace']['id'] == 'ws-1'
     assert any('UPDATE users SET current_workspace_id' in statement for statement, _ in statements)
+
+
+def test_build_history_response_returns_json_safe_workspace_records(
+    pilot_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Result:
+        def __init__(self, rows=None):
+            self._rows = rows or []
+
+        def fetchone(self):
+            return self._rows[0] if self._rows else None
+
+        def fetchall(self):
+            return self._rows
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            normalized = ' '.join(str(statement).split())
+            if 'FROM analysis_runs' in normalized:
+                return _Result([{
+                    'id': uuid.uuid4(),
+                    'analysis_type': 'threat_transaction',
+                    'service_name': 'threat-engine',
+                    'status': 'completed',
+                    'title': 'Threat transaction analysis',
+                    'source': 'live',
+                    'summary': 'Synthetic summary',
+                    'request_payload': {'wallet': '0xabc'},
+                    'response_payload': {'recommended_action': 'review'},
+                    'created_at': datetime(2026, 3, 24, tzinfo=timezone.utc),
+                }])
+            if 'FROM alerts' in normalized or 'FROM governance_actions' in normalized or 'FROM incidents' in normalized:
+                return _Result([])
+            if 'FROM audit_logs' in normalized:
+                return _Result([{
+                    'id': uuid.uuid4(),
+                    'action': 'analysis.run',
+                    'entity_type': 'analysis_run',
+                    'entity_id': uuid.uuid4(),
+                    'ip_address': None,
+                    'metadata': {'analysis_type': 'threat_transaction'},
+                    'created_at': datetime(2026, 3, 24, tzinfo=timezone.utc),
+                }])
+            if 'SELECT (SELECT COUNT(*) FROM analysis_runs' in normalized:
+                return _Result([{
+                    'analysis_runs': 1,
+                    'alerts': 0,
+                    'governance_actions': 0,
+                    'incidents': 0,
+                    'audit_logs': 1,
+                }])
+            return _Result([])
+
+    @contextmanager
+    def fake_pg():
+        yield _Connection()
+
+    monkeypatch.setattr(pilot_module, 'require_live_mode', lambda: None)
+    monkeypatch.setattr(pilot_module, 'pg_connection', fake_pg)
+    monkeypatch.setattr(
+        pilot_module,
+        'authenticate_with_connection',
+        lambda connection, request: {'id': 'user-1'},
+    )
+    monkeypatch.setattr(
+        pilot_module,
+        'resolve_workspace',
+        lambda connection, user_id, requested_workspace_id=None: {
+            'workspace_id': 'ws-1',
+            'role': 'workspace_owner',
+            'workspace': {'id': 'ws-1', 'name': 'Treasury Ops', 'slug': 'treasury-ops'},
+        },
+    )
+
+    payload = pilot_module.build_history_response(_request(), limit=25)
+
+    assert payload['workspace']['id'] == 'ws-1'
+    assert payload['analysis_runs'][0]['id']
+    assert payload['analysis_runs'][0]['created_at'].endswith('+00:00')
+    assert isinstance(payload['counts'], dict)

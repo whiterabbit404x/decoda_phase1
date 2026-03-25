@@ -17,7 +17,7 @@ export type ServiceStatus = {
 
 export type DashboardResponse = {
   mode: string;
-  database_url: string;
+  database_url: string | null;
   redis_enabled: boolean;
   cards: DashboardCard[];
   services: ServiceStatus[];
@@ -967,7 +967,7 @@ export function normalizeDashboardResponse(payload: unknown): DashboardResponse 
 
   return {
     mode: typeof payload.mode === 'string' ? payload.mode : 'local',
-    database_url: typeof payload.database_url === 'string' ? payload.database_url : 'sqlite:///.data/phase1.db',
+    database_url: typeof payload.database_url === 'string' ? payload.database_url : null,
     redis_enabled: typeof payload.redis_enabled === 'boolean' ? payload.redis_enabled : false,
     cards,
     services,

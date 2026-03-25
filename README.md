@@ -1025,3 +1025,10 @@ You can also inspect `/health/details` to confirm dependency diagnostics, build/
 - [ ] Optional pilot seed completed with `python services/api/scripts/seed.py --pilot-demo`.
 - [ ] `/health/details` confirms expected dependency and runtime mode.
 - [ ] `/` shows the marketing homepage and `/dashboard` opens the authenticated product experience.
+
+### Secret hygiene after any suspected exposure
+
+- Rotate `AUTH_TOKEN_SECRET` in Railway and redeploy the API so all newly issued auth tokens use the new secret.
+- Rotate `DATABASE_URL` credentials in Neon/Railway if they were ever shared in logs or screenshots.
+- Rotate Vercel + Railway API URL credentials if they include embedded credentials.
+- Verify `GET /health` and dashboard APIs only return masked database configuration (`[configured]`) instead of raw DSNs before inviting external evaluators.
