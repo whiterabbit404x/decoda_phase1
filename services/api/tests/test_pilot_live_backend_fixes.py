@@ -182,10 +182,10 @@ def test_seed_demo_workspace_creates_demo_user_workspace_and_membership(pilot_mo
                 return _Result([])
             if 'SELECT 1 FROM workspaces WHERE slug = %s' in normalized:
                 return _Result([])
-            if 'SELECT id, email, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at FROM users WHERE id = %s' in normalized:
+            if 'SELECT id, email, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at, email_verified_at, mfa_enabled_at FROM users WHERE id = %s' in normalized:
                 return _Result([{'id': 'user-1', 'email': 'demo@decoda.app', 'full_name': 'Decoda Demo User', 'current_workspace_id': 'workspace-1', 'created_at': 'now', 'updated_at': 'now', 'last_sign_in_at': 'now'}])
             if 'SELECT wm.workspace_id, wm.role, wm.created_at, w.name, w.slug FROM workspace_members wm JOIN workspaces w ON w.id = wm.workspace_id WHERE wm.user_id = %s' in normalized:
-                return _Result([{'workspace_id': 'workspace-1', 'role': 'workspace_owner', 'created_at': 'now', 'name': 'Decoda Demo Workspace', 'slug': 'decoda-demo-workspace'}])
+                return _Result([{'workspace_id': 'workspace-1', 'role': 'owner', 'created_at': 'now', 'name': 'Decoda Demo Workspace', 'slug': 'decoda-demo-workspace'}])
             return _Result()
 
         def commit(self):
@@ -280,8 +280,9 @@ def test_signup_user_inserts_user_with_null_workspace_then_backfills_current_wor
     monkeypatch.setattr(pilot_module, 'pg_connection', fake_pg_connection)
     monkeypatch.setattr(pilot_module, 'hash_password', lambda _: 'hashed-password')
     monkeypatch.setattr(pilot_module, 'build_user_response', lambda connection, user_id: {'id': user_id})
-    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id: f'token-{user_id}')
+    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id, session_version=1: f'token-{user_id}')
     monkeypatch.setattr(pilot_module, 'log_audit', lambda *args, **kwargs: None)
+    monkeypatch.setattr(pilot_module, '_create_user_token', lambda *args, **kwargs: 'verify-token')
     ids = iter(['user-1', 'workspace-1', 'membership-1'])
     monkeypatch.setattr(pilot_module.uuid, 'uuid4', lambda: next(ids))
 
@@ -295,7 +296,7 @@ def test_signup_user_inserts_user_with_null_workspace_then_backfills_current_wor
         _Request(),
     )
 
-    assert payload['token_type'] == 'bearer'
+    assert payload['verification_required'] is True
     user_insert = next(params for statement, params in executed if 'INSERT INTO users' in statement)
     assert user_insert == ('user-1', 'new@decoda.app', 'hashed-password', 'Decoda User', None)
     assert any('INSERT INTO workspaces' in statement for statement, _ in executed)
@@ -428,8 +429,8 @@ def test_signin_user_success_with_uuid_user_id(pilot_module, monkeypatch: pytest
             executed.append(normalized)
             if 'SELECT required.table_name FROM unnest' in normalized:
                 return _Result([])
-            if 'SELECT id, password_hash FROM users WHERE email = %s' in normalized:
-                return _Result([{'id': user_uuid, 'password_hash': 'stored-hash'}])
+            if 'SELECT id, password_hash, email_verified_at, session_version, mfa_totp_secret, mfa_enabled_at FROM users WHERE email = %s' in normalized:
+                return _Result([{'id': user_uuid, 'password_hash': 'stored-hash', 'email_verified_at': datetime(2026, 3, 1, tzinfo=timezone.utc), 'session_version': 1, 'mfa_totp_secret': None, 'mfa_enabled_at': None}])
             return _Result()
 
         def commit(self):
@@ -448,7 +449,8 @@ def test_signin_user_success_with_uuid_user_id(pilot_module, monkeypatch: pytest
         'build_user_response',
         lambda connection, user_id: {'id': user_id, 'memberships': [], 'current_workspace': None},
     )
-    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id: f'token-for-{user_id}')
+    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id, session_version=1: f'token-for-{user_id}')
+    monkeypatch.setattr(pilot_module, '_store_session', lambda *args, **kwargs: None)
 
     payload = pilot_module.signin_user({'email': 'demo@decoda.app', 'password': 'PilotDemoPass123!'}, _Request())
 
@@ -468,8 +470,8 @@ def test_signin_user_success_returns_json_safe_payload(pilot_module, monkeypatch
             normalized = ' '.join(str(statement).split())
             if 'SELECT required.table_name FROM unnest' in normalized:
                 return _Result([])
-            if 'SELECT id, password_hash FROM users WHERE email = %s' in normalized:
-                return _Result([{'id': 'user-123', 'password_hash': 'stored-hash'}])
+            if 'SELECT id, password_hash, email_verified_at, session_version, mfa_totp_secret, mfa_enabled_at FROM users WHERE email = %s' in normalized:
+                return _Result([{'id': 'user-123', 'password_hash': 'stored-hash', 'email_verified_at': datetime(2026, 3, 1, tzinfo=timezone.utc), 'session_version': 1, 'mfa_totp_secret': None, 'mfa_enabled_at': None}])
             return _Result()
 
         def commit(self):
@@ -496,7 +498,8 @@ def test_signin_user_success_returns_json_safe_payload(pilot_module, monkeypatch
             'last_sign_in_at': '2026-03-24T00:00:00+00:00',
         },
     )
-    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id: f'token-for-{user_id}')
+    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id, session_version=1: f'token-for-{user_id}')
+    monkeypatch.setattr(pilot_module, '_store_session', lambda *args, **kwargs: None)
 
     payload = pilot_module.signin_user({'email': 'demo@decoda.app', 'password': 'PilotDemoPass123!'}, _Request())
     assert payload['user']['id'] == 'user-123'
@@ -513,7 +516,7 @@ def test_build_user_response_handles_null_current_workspace_id(pilot_module, mon
         def execute(self, statement, params=None):
             normalized = ' '.join(str(statement).split())
             executed.append(normalized)
-            if 'SELECT id, email, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at FROM users WHERE id = %s' in normalized:
+            if 'SELECT id, email, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at, email_verified_at, mfa_enabled_at FROM users WHERE id = %s' in normalized:
                 return _Result(
                     [
                         {
@@ -524,6 +527,8 @@ def test_build_user_response_handles_null_current_workspace_id(pilot_module, mon
                             'created_at': timestamp,
                             'updated_at': timestamp,
                             'last_sign_in_at': timestamp,
+                            'email_verified_at': timestamp,
+                            'mfa_enabled_at': None,
                         }
                     ]
                 )

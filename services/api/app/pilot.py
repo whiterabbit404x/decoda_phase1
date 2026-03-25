@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import uuid
@@ -18,7 +19,16 @@ from typing import Any, Iterable
 import importlib
 from fastapi import HTTPException, Request, status
 
-ROLE_VALUES = {'workspace_owner', 'workspace_admin', 'workspace_member'}
+ROLE_VALUES = {'owner', 'admin', 'analyst', 'viewer', 'workspace_owner', 'workspace_admin', 'workspace_member'}
+ROLE_CANONICAL_MAP = {
+    'workspace_owner': 'owner',
+    'workspace_admin': 'admin',
+    'workspace_member': 'analyst',
+    'owner': 'owner',
+    'admin': 'admin',
+    'analyst': 'analyst',
+    'viewer': 'viewer',
+}
 AUTH_WINDOW_SECONDS = 60
 AUTH_MAX_ATTEMPTS = 10
 CORE_PILOT_TABLES = (
@@ -26,6 +36,8 @@ CORE_PILOT_TABLES = (
     'workspaces',
     'workspace_members',
     'auth_sessions',
+    'auth_tokens',
+    'mfa_recovery_codes',
     'analysis_runs',
     'alerts',
     'governance_actions',
@@ -33,6 +45,10 @@ CORE_PILOT_TABLES = (
     'audit_logs',
 )
 DEFAULT_DEMO_EMAIL = 'demo@decoda.app'
+EMAIL_VERIFICATION_TTL_MINUTES = 60 * 24
+PASSWORD_RESET_TTL_MINUTES = 30
+SESSION_TTL_HOURS = 24
+MFA_RECOVERY_CODE_COUNT = 8
 _rate_limit_lock = threading.Lock()
 _rate_limit_state: dict[str, list[float]] = {}
 logger = logging.getLogger(__name__)
@@ -312,6 +328,55 @@ def token_secret() -> str:
     return value
 
 
+def _auth_token_hash(value: str) -> str:
+    return hashlib.sha256(f'{token_secret()}::{value}'.encode('utf-8')).hexdigest()
+
+
+def _normalize_workspace_role(role: str) -> str:
+    normalized = ROLE_CANONICAL_MAP.get(role.strip().lower(), '')
+    if not normalized:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid workspace role.')
+    return normalized
+
+
+def _require_strong_password(password: str) -> None:
+    _require_password(password)
+    if not re.search(r'[A-Z]', password) or not re.search(r'[a-z]', password) or not re.search(r'\d', password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Password must include upper-case, lower-case, and numeric characters.',
+        )
+
+
+def _store_session(connection: Any, user_id: str, token: str, workspace_id: str | None = None) -> None:
+    connection.execute(
+        '''
+        INSERT INTO auth_sessions (id, user_id, workspace_id, session_token_hash, auth_mode, created_at, updated_at, expires_at, metadata)
+        VALUES (%s, %s, %s, %s, %s, NOW(), NOW(), NOW() + (%s || ' hours')::interval, '{}'::jsonb)
+        ''',
+        (str(uuid.uuid4()), user_id, workspace_id, _auth_token_hash(token), 'bearer_token', SESSION_TTL_HOURS),
+    )
+
+
+def _create_user_token(connection: Any, user_id: str, purpose: str, ttl_minutes: int, request: Request | None = None) -> str:
+    raw_token = secrets.token_urlsafe(32)
+    connection.execute(
+        '''
+        INSERT INTO auth_tokens (id, user_id, token_hash, purpose, expires_at, created_at, metadata)
+        VALUES (%s, %s, %s, %s, NOW() + (%s || ' minutes')::interval, NOW(), %s::jsonb)
+        ''',
+        (
+            str(uuid.uuid4()),
+            user_id,
+            _auth_token_hash(raw_token),
+            purpose,
+            ttl_minutes,
+            _json_dumps({'ip_address': request.client.host if request and request.client else None}),
+        ),
+    )
+    return raw_token
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.scrypt(password.encode('utf-8'), salt=salt, n=2**14, r=8, p=1)
@@ -331,13 +396,14 @@ def verify_password(password: str, encoded_password: str) -> bool:
     return hmac.compare_digest(candidate, expected)
 
 
-def create_access_token(user_id: str) -> str:
+def create_access_token(user_id: str, session_version: int = 1) -> str:
     user_id = str(user_id)
     payload = {
         'sub': user_id,
         'exp': int((utc_now() + timedelta(hours=24)).timestamp()),
         'iat': int(utc_now().timestamp()),
         'jti': str(uuid.uuid4()),
+        'sv': int(session_version),
     }
     payload_bytes = json.dumps(payload, separators=(',', ':'), sort_keys=True).encode('utf-8')
     payload_segment = _b64url(payload_bytes)
@@ -357,6 +423,25 @@ def decode_access_token(token: str) -> dict[str, Any]:
     if int(payload.get('exp', 0)) < int(utc_now().timestamp()):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Access token expired.')
     return payload
+
+
+def _validate_session(connection: Any, token: str, payload: dict[str, Any]) -> None:
+    session_hash = _auth_token_hash(token)
+    session = connection.execute(
+        '''
+        SELECT revoked_at, expires_at
+        FROM auth_sessions
+        WHERE session_token_hash = %s
+        ''',
+        (session_hash,),
+    ).fetchone()
+    if session is None or session['revoked_at'] is not None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Session is no longer active.')
+    if session['expires_at'] and session['expires_at'] < utc_now():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Session expired.')
+    user_session_version = connection.execute('SELECT session_version FROM users WHERE id = %s', (payload.get('sub'),)).fetchone()
+    if not user_session_version or int(payload.get('sv', 0)) != int(user_session_version['session_version']):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Session version is no longer valid.')
 
 
 def enforce_auth_rate_limit(request: Request, action: str) -> None:
@@ -425,6 +510,7 @@ def _ensure_membership(connection: Any, user_id: str, workspace_id: str) -> dict
     ).fetchone()
     if membership is None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='You do not belong to that workspace.')
+    membership['role'] = _normalize_workspace_role(str(membership['role']))
     return membership
 
 
@@ -460,7 +546,7 @@ def log_audit(
 def build_user_response(connection: psycopg.Connection, user_id: str) -> dict[str, Any]:
     user = connection.execute(
         '''
-        SELECT id, email, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at
+        SELECT id, email, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at, email_verified_at, mfa_enabled_at
         FROM users
         WHERE id = %s
         ''',
@@ -484,7 +570,7 @@ def build_user_response(connection: psycopg.Connection, user_id: str) -> dict[st
         membership_payload.append(
             {
                 'workspace_id': workspace_id,
-                'role': membership['role'],
+                'role': _normalize_workspace_role(str(membership['role'])),
                 'created_at': (
                     membership['created_at'].isoformat() if hasattr(membership['created_at'], 'isoformat') else str(membership['created_at'])
                 ),
@@ -530,6 +616,9 @@ def build_user_response(connection: psycopg.Connection, user_id: str) -> dict[st
         'created_at': user['created_at'].isoformat() if hasattr(user['created_at'], 'isoformat') else str(user['created_at']),
         'updated_at': user['updated_at'].isoformat() if hasattr(user['updated_at'], 'isoformat') else str(user['updated_at']),
         'last_sign_in_at': user['last_sign_in_at'].isoformat() if user['last_sign_in_at'] else None,
+        'email_verified': bool(user['email_verified_at']),
+        'email_verified_at': user['email_verified_at'].isoformat() if user['email_verified_at'] else None,
+        'mfa_enabled': bool(user['mfa_enabled_at']),
         'current_workspace': current_workspace,
         'memberships': membership_payload,
     }
@@ -548,6 +637,7 @@ def authenticate_request(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Token payload missing subject.')
     with pg_connection() as connection:
         ensure_pilot_schema(connection)
+        _validate_session(connection, token, payload)
         user = build_user_response(connection, user_id)
     return user
 
@@ -561,6 +651,7 @@ def authenticate_with_connection(connection: psycopg.Connection, request: Reques
     user_id = str(payload.get('sub') or '')
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Token payload missing subject.')
+    _validate_session(connection, token, payload)
     return build_user_response(connection, user_id)
 
 
@@ -587,7 +678,7 @@ def signup_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     require_live_mode()
     email = _normalize_email(str(payload.get('email', '')))
     password = str(payload.get('password', ''))
-    _require_password(password)
+    _require_strong_password(password)
     full_name = str(payload.get('full_name', '')).strip() or email.split('@', 1)[0]
     workspace_name = str(payload.get('workspace_name', '')).strip() or f"{full_name}'s Workspace"
     password_hash = hash_password(password)
@@ -606,8 +697,8 @@ def signup_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
             slug = f'{slug_base}-{suffix}'
         connection.execute(
             '''
-            INSERT INTO users (id, email, password_hash, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at)
-            VALUES (%s, %s, %s, %s, %s, NOW(), NOW(), NOW())
+            INSERT INTO users (id, email, password_hash, full_name, current_workspace_id, email_verified_at, session_version, created_at, updated_at, last_sign_in_at)
+            VALUES (%s, %s, %s, %s, %s, NULL, 1, NOW(), NOW(), NULL)
             ''',
             (user_id, email, password_hash, full_name, None),
         )
@@ -623,7 +714,7 @@ def signup_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
             INSERT INTO workspace_members (id, workspace_id, user_id, role, created_at)
             VALUES (%s, %s, %s, %s, NOW())
             ''',
-            (str(uuid.uuid4()), workspace_id, user_id, 'workspace_owner'),
+            (str(uuid.uuid4()), workspace_id, user_id, 'owner'),
         )
         connection.execute(
             'UPDATE users SET current_workspace_id = %s, updated_at = NOW() WHERE id = %s',
@@ -639,9 +730,14 @@ def signup_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
             workspace_id=workspace_id,
             metadata={'email': email, 'workspace_name': workspace_name},
         )
+        verification_token = _create_user_token(connection, user_id, 'email_verification', EMAIL_VERIFICATION_TTL_MINUTES, request=request)
         connection.commit()
         user = build_user_response(connection, user_id)
-    return {'access_token': create_access_token(user_id), 'token_type': 'bearer', 'user': user}
+    return {
+        'verification_required': True,
+        'verification_token': verification_token if env_flag('AUTH_EXPOSE_DEBUG_TOKENS', default=False) else None,
+        'user': user,
+    }
 
 
 def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
@@ -653,7 +749,7 @@ def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
             ensure_pilot_schema(connection)
             try:
                 user = connection.execute(
-                    'SELECT id, password_hash FROM users WHERE email = %s',
+                    'SELECT id, password_hash, email_verified_at, session_version, mfa_totp_secret, mfa_enabled_at FROM users WHERE email = %s',
                     (email,),
                 ).fetchone()
             except Exception:
@@ -663,6 +759,8 @@ def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
                 logger.warning('signin_user rejected credentials', extra={'event': 'auth.signin.invalid_credentials', 'email': email})
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid email or password.')
             user_id = str(user['id'])
+            if not user['email_verified_at']:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Verify your email before signing in.')
             try:
                 connection.execute('UPDATE users SET last_sign_in_at = NOW(), updated_at = NOW() WHERE id = %s', (user_id,))
             except Exception:
@@ -698,7 +796,11 @@ def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
         logger.exception('signin_user failed due to unexpected backend exception', extra={'step': 'unexpected'})
         raise
     try:
-        access_token = create_access_token(user_id)
+        access_token = create_access_token(user_id, int(user.get('session_version') or 1))
+        with pg_connection() as connection:
+            ensure_pilot_schema(connection)
+            _store_session(connection, user_id, access_token, hydrated_user.get('current_workspace_id'))
+            connection.commit()
     except Exception:
         logger.exception('signin_user failed during token creation', extra={'step': 'create_access_token', 'user_id': user_id})
         raise
@@ -708,9 +810,16 @@ def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
 
 def signout_user(request: Request) -> dict[str, Any]:
     require_live_mode()
+    authorization = request.headers.get('authorization', '')
+    token = authorization.split(' ', 1)[1].strip() if authorization.startswith('Bearer ') else ''
     with pg_connection() as connection:
         ensure_pilot_schema(connection)
         user = authenticate_with_connection(connection, request)
+        if token:
+            connection.execute(
+                'UPDATE auth_sessions SET revoked_at = NOW(), updated_at = NOW() WHERE session_token_hash = %s',
+                (_auth_token_hash(token),),
+            )
         log_audit(
             connection,
             action='auth.signout',
@@ -725,14 +834,106 @@ def signout_user(request: Request) -> dict[str, Any]:
     return {'signed_out': True}
 
 
+def signout_all_sessions(request: Request) -> dict[str, Any]:
+    require_live_mode()
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        user = authenticate_with_connection(connection, request)
+        connection.execute(
+            'UPDATE auth_sessions SET revoked_at = NOW(), updated_at = NOW() WHERE user_id = %s AND revoked_at IS NULL',
+            (user['id'],),
+        )
+        connection.execute(
+            'UPDATE users SET session_version = session_version + 1, updated_at = NOW() WHERE id = %s',
+            (user['id'],),
+        )
+        log_audit(connection, action='auth.signout_all', entity_type='user', entity_id=user['id'], request=request, user_id=user['id'], workspace_id=user['current_workspace_id'], metadata={})
+        connection.commit()
+        return {'signed_out_all': True}
+
+
+def request_email_verification(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    email = _normalize_email(str(payload.get('email', '')))
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        user = connection.execute('SELECT id, email_verified_at FROM users WHERE email = %s', (email,)).fetchone()
+        if user is None:
+            return {'sent': True}
+        if user['email_verified_at']:
+            return {'sent': True, 'already_verified': True}
+        token = _create_user_token(connection, str(user['id']), 'email_verification', EMAIL_VERIFICATION_TTL_MINUTES, request=request)
+        connection.commit()
+        return {'sent': True, 'verification_token': token if env_flag('AUTH_EXPOSE_DEBUG_TOKENS', default=False) else None}
+
+
+def verify_email_token(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    raw_token = str(payload.get('token', '')).strip()
+    if not raw_token:
+        raise HTTPException(status_code=400, detail='token is required')
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        token_row = connection.execute(
+            "SELECT id, user_id, expires_at, used_at FROM auth_tokens WHERE token_hash = %s AND purpose = 'email_verification'",
+            (_auth_token_hash(raw_token),),
+        ).fetchone()
+        if token_row is None:
+            raise HTTPException(status_code=400, detail='Invalid verification token.')
+        if token_row['used_at'] is not None:
+            raise HTTPException(status_code=400, detail='Verification token was already used.')
+        if token_row['expires_at'] < utc_now():
+            raise HTTPException(status_code=400, detail='Verification token has expired.')
+        connection.execute('UPDATE auth_tokens SET used_at = NOW() WHERE id = %s', (token_row['id'],))
+        connection.execute('UPDATE users SET email_verified_at = NOW(), updated_at = NOW() WHERE id = %s', (token_row['user_id'],))
+        log_audit(connection, action='auth.email_verified', entity_type='user', entity_id=str(token_row['user_id']), request=request, user_id=str(token_row['user_id']), workspace_id=None, metadata={})
+        connection.commit()
+        return {'verified': True}
+
+
+def request_password_reset(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    email = _normalize_email(str(payload.get('email', '')))
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        user = connection.execute('SELECT id FROM users WHERE email = %s', (email,)).fetchone()
+        if user is None:
+            return {'sent': True}
+        token = _create_user_token(connection, str(user['id']), 'password_reset', PASSWORD_RESET_TTL_MINUTES, request=request)
+        connection.commit()
+        return {'sent': True, 'reset_token': token if env_flag('AUTH_EXPOSE_DEBUG_TOKENS', default=False) else None}
+
+
+def reset_password(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    raw_token = str(payload.get('token', '')).strip()
+    password = str(payload.get('password', ''))
+    _require_strong_password(password)
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        token_row = connection.execute(
+            "SELECT id, user_id, expires_at, used_at FROM auth_tokens WHERE token_hash = %s AND purpose = 'password_reset'",
+            (_auth_token_hash(raw_token),),
+        ).fetchone()
+        if token_row is None or token_row['used_at'] is not None or token_row['expires_at'] < utc_now():
+            raise HTTPException(status_code=400, detail='Invalid or expired password reset token.')
+        connection.execute('UPDATE auth_tokens SET used_at = NOW() WHERE id = %s', (token_row['id'],))
+        connection.execute(
+            'UPDATE users SET password_hash = %s, session_version = session_version + 1, updated_at = NOW() WHERE id = %s',
+            (hash_password(password), token_row['user_id']),
+        )
+        connection.execute('UPDATE auth_sessions SET revoked_at = NOW(), updated_at = NOW() WHERE user_id = %s AND revoked_at IS NULL', (token_row['user_id'],))
+        log_audit(connection, action='auth.password_reset', entity_type='user', entity_id=str(token_row['user_id']), request=request, user_id=str(token_row['user_id']), workspace_id=None, metadata={})
+        connection.commit()
+        return {'password_reset': True}
+
+
 def create_workspace_for_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     require_live_mode()
     workspace_name = str(payload.get('name', '')).strip()
     if not workspace_name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Workspace name is required.')
-    role = str(payload.get('role', 'workspace_owner')).strip() or 'workspace_owner'
-    if role not in ROLE_VALUES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid workspace role.')
+    role = _normalize_workspace_role(str(payload.get('role', 'owner')).strip() or 'owner')
     with pg_connection() as connection:
         ensure_pilot_schema(connection)
         user = authenticate_with_connection(connection, request)
@@ -871,7 +1072,7 @@ def seed_demo_workspace(email: str, password: str, workspace_name: str, full_nam
         if workspace_created or membership is None:
             connection.execute(
                 'INSERT INTO workspace_members (id, workspace_id, user_id, role, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT (workspace_id, user_id) DO NOTHING',
-                (str(uuid.uuid4()), workspace_id, user_id, 'workspace_owner'),
+                (str(uuid.uuid4()), workspace_id, user_id, 'owner'),
             )
             membership_created = True
         connection.execute(

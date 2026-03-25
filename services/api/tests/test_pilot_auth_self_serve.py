@@ -27,7 +27,7 @@ def _request() -> Request:
     return Request({'type': 'http', 'headers': []})
 
 
-def test_signup_success_returns_token_and_user(pilot_module, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_signup_success_returns_verification_required(pilot_module, monkeypatch: pytest.MonkeyPatch) -> None:
     class _Result:
         def __init__(self, row=None):
             self._row = row
@@ -56,7 +56,7 @@ def test_signup_success_returns_token_and_user(pilot_module, monkeypatch: pytest
     monkeypatch.setattr(pilot_module, 'hash_password', lambda password: 'hashed-value')
     monkeypatch.setattr(pilot_module, 'build_user_response', lambda connection, user_id: {'id': user_id, 'current_workspace': {'id': 'ws-1'}})
     monkeypatch.setattr(pilot_module, 'log_audit', lambda *args, **kwargs: None)
-    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id: f'token-{user_id}')
+    monkeypatch.setattr(pilot_module, '_create_user_token', lambda *args, **kwargs: 'verify-token')
 
     response = pilot_module.signup_user(
         {
@@ -68,8 +68,7 @@ def test_signup_success_returns_token_and_user(pilot_module, monkeypatch: pytest
         _request(),
     )
 
-    assert response['token_type'] == 'bearer'
-    assert response['access_token'].startswith('token-')
+    assert response['verification_required'] is True
     assert response['user']['current_workspace']['id'] == 'ws-1'
 
 
@@ -111,8 +110,8 @@ def test_signin_success_returns_hydrated_user(pilot_module, monkeypatch: pytest.
 
     class _Connection:
         def execute(self, statement, params=None):
-            if 'SELECT id, password_hash FROM users WHERE email' in statement:
-                return _Result({'id': 'user-1', 'password_hash': 'stored'})
+            if 'SELECT id, password_hash, email_verified_at, session_version, mfa_totp_secret, mfa_enabled_at FROM users WHERE email' in statement:
+                return _Result({'id': 'user-1', 'password_hash': 'stored', 'email_verified_at': datetime(2026, 3, 1, tzinfo=timezone.utc), 'session_version': 1, 'mfa_totp_secret': None, 'mfa_enabled_at': None})
             return _Result(None)
 
         def commit(self):
@@ -128,7 +127,8 @@ def test_signin_success_returns_hydrated_user(pilot_module, monkeypatch: pytest.
     monkeypatch.setattr(pilot_module, 'verify_password', lambda password, encoded: True)
     monkeypatch.setattr(pilot_module, 'build_user_response', lambda connection, user_id: {'id': user_id, 'current_workspace': None})
     monkeypatch.setattr(pilot_module, 'log_audit', lambda *args, **kwargs: None)
-    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id: f'token-{user_id}')
+    monkeypatch.setattr(pilot_module, 'create_access_token', lambda user_id, session_version=1: f'token-{user_id}-{session_version}')
+    monkeypatch.setattr(pilot_module, '_store_session', lambda *args, **kwargs: None)
 
     response = pilot_module.signin_user({'email': 'team@example.com', 'password': 'StrongPass1234'}, _request())
 
@@ -147,8 +147,8 @@ def test_signin_invalid_credentials_returns_401(pilot_module, monkeypatch: pytes
 
     class _Connection:
         def execute(self, statement, params=None):
-            if 'SELECT id, password_hash FROM users WHERE email' in statement:
-                return _Result({'id': 'user-1', 'password_hash': 'stored'})
+            if 'SELECT id, password_hash, email_verified_at, session_version, mfa_totp_secret, mfa_enabled_at FROM users WHERE email' in statement:
+                return _Result({'id': 'user-1', 'password_hash': 'stored', 'email_verified_at': datetime(2026, 3, 1, tzinfo=timezone.utc), 'session_version': 1, 'mfa_totp_secret': None, 'mfa_enabled_at': None})
             return _Result(None)
 
     @contextmanager
@@ -206,11 +206,13 @@ def test_build_user_response_backfills_null_current_workspace_from_membership(
                     'created_at': datetime(2026, 3, 20, tzinfo=timezone.utc),
                     'updated_at': datetime(2026, 3, 20, tzinfo=timezone.utc),
                     'last_sign_in_at': None,
+                    'email_verified_at': datetime(2026, 3, 20, tzinfo=timezone.utc),
+                    'mfa_enabled_at': None,
                 }])
             if 'FROM workspace_members' in normalized:
                 return _Result([{
                     'workspace_id': 'ws-1',
-                    'role': 'workspace_owner',
+                    'role': 'owner',
                     'created_at': datetime(2026, 3, 20, tzinfo=timezone.utc),
                     'name': 'Treasury Ops',
                     'slug': 'treasury-ops',

@@ -98,7 +98,8 @@ Fast operator checks:
 
 ### What remains for full production later
 
-- Email verification, password reset, MFA, and server-side session invalidation.
+- Email verification, password reset, and server-side session invalidation.
+- TOTP MFA, distributed/shared-store auth rate limiting, background workers, webhooks, and billing automation are still planned before GA.
 - Stronger distributed rate limiting / shared cache instead of in-memory auth throttling.
 - Richer RBAC enforcement across every workflow action.
 - Background jobs, webhooks, and more granular per-record dashboards instead of summary persistence only.
@@ -998,6 +999,7 @@ python services/api/scripts/seed.py --pilot-demo
 
 - `migrate.py` applies the live pilot schema to Neon.
 - `seed.py --pilot-demo` creates a demo workspace/user for customer walkthroughs while preserving the existing local demo workflow.
+- `AUTH_EXPOSE_DEBUG_TOKENS=true` can be used in local/dev environments to return verification/reset tokens in API JSON for manual flow testing. Keep this disabled in shared/prod environments.
 
 ### Verifying live vs degraded vs fallback vs sample
 
