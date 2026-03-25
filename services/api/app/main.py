@@ -44,12 +44,17 @@ from services.api.app.pilot import (
     pg_connection,
     resolve_workspace,
     run_startup_migrations_if_enabled,
+    request_email_verification,
+    request_password_reset,
     select_workspace_for_user,
     demo_seed_status,
     schema_missing_error_payload,
     signin_user,
     signout_user,
+    signout_all_sessions,
     signup_user,
+    verify_email_token,
+    reset_password,
 )
 
 
@@ -1241,9 +1246,37 @@ def auth_signout(request: Request) -> dict[str, Any]:
     return with_auth_schema_json(lambda: signout_user(request))
 
 
+@app.post('/auth/signout-all', summary='Sign out all sessions for authenticated user')
+def auth_signout_all(request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: signout_all_sessions(request))
+
+
 @app.get('/auth/me', summary='Current authenticated live-mode user')
 def auth_me(request: Request) -> dict[str, Any]:
     return with_auth_schema_json(lambda: {'mode': pilot_mode(), 'user': authenticate_request(request)})
+
+
+@app.post('/auth/resend-verification', summary='Resend email verification link')
+def auth_resend_verification(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    enforce_auth_rate_limit(request, 'resend_verification')
+    return with_auth_schema_json(lambda: request_email_verification(payload, request))
+
+
+@app.post('/auth/verify-email', summary='Verify account email using one-time token')
+def auth_verify_email(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    return with_auth_schema_json(lambda: verify_email_token(payload, request))
+
+
+@app.post('/auth/forgot-password', summary='Request password reset token')
+def auth_forgot_password(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    enforce_auth_rate_limit(request, 'forgot_password')
+    return with_auth_schema_json(lambda: request_password_reset(payload, request))
+
+
+@app.post('/auth/reset-password', summary='Reset password using one-time token')
+def auth_reset_password(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    enforce_auth_rate_limit(request, 'reset_password')
+    return with_auth_schema_json(lambda: reset_password(payload, request))
 
 
 @app.get('/workspaces', summary='List workspaces for the authenticated user')

@@ -6,6 +6,7 @@ import { usePilotAuth } from 'app/pilot-auth-context';
 
 export default function SettingsPageClient() {
   const { apiUrl, authHeaders, error, liveModeConfigured, loading, selectWorkspace, user } = usePilotAuth();
+  const [sessionMessage, setSessionMessage] = useState<string | null>(null);
   const [healthDetails, setHealthDetails] = useState<Record<string, unknown> | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
 
@@ -13,7 +14,7 @@ export default function SettingsPageClient() {
     () => user?.memberships.find((membership) => membership.workspace_id === user.current_workspace?.id) ?? null,
     [user]
   );
-  const isAdmin = currentMembership?.role === 'workspace_owner' || currentMembership?.role === 'workspace_admin';
+  const isAdmin = currentMembership?.role === 'owner' || currentMembership?.role === 'admin';
 
   useEffect(() => {
     let active = true;
@@ -88,6 +89,18 @@ export default function SettingsPageClient() {
             <h2>{liveModeConfigured ? 'Live mode configured' : 'Sample mode only'}</h2>
             <p className="muted">{apiUrl || 'NEXT_PUBLIC_API_URL not configured'}</p>
             {error ? <p className="statusLine">{error}</p> : <p className="muted">Authentication errors and session expiry messages appear here.</p>}
+            <button
+              type="button"
+              onClick={() => {
+                void fetch('/api/auth/signout-all', { method: 'POST', headers: authHeaders() })
+                  .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
+                  .then(({ ok, payload }) => setSessionMessage(ok ? 'All sessions revoked. Sign in again on other devices.' : (payload.detail ?? 'Unable to revoke sessions.')))
+                  .catch(() => setSessionMessage('Unable to revoke sessions.'));
+              }}
+            >
+              Sign out all sessions
+            </button>
+            {sessionMessage ? <p className="statusLine">{sessionMessage}</p> : null}
           </article>
         </div>
       </section>
