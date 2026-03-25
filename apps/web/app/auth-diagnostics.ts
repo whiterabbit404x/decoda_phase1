@@ -83,6 +83,14 @@ export function classifyAuthResponseError(
     return safeDetail;
   }
 
+  if (status === 409) {
+    return safeDetail ?? 'An account with that email already exists. Please sign in instead.';
+  }
+
+  if (status === 400 || status === 422 || status === 429) {
+    return safeDetail ?? `Unable to ${actionLabel}. Please review your details and try again.`;
+  }
+
   if (status === 500) {
     if (safeDetail?.includes('AUTH_TOKEN_SECRET')) {
       return `The API at ${normalizedBackendApiUrl ?? normalizedApiUrl ?? 'the configured backend'} reached the auth handler, but backend authentication is misconfigured because AUTH_TOKEN_SECRET is missing.`;

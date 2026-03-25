@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import AuthBuildBadge from '../auth-build-badge';
 import AuthDiagnosticCard from '../auth-diagnostic-card';
@@ -20,6 +20,8 @@ export default function SignUpPageClient({ previewNotice }: { previewNotice?: Re
     runtimeConfigSource,
     signUp,
     apiUrl,
+    isAuthenticated,
+    loading: authLoading,
   } = usePilotAuth();
   const [fullName, setFullName] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
@@ -38,8 +40,17 @@ export default function SignUpPageClient({ previewNotice }: { previewNotice?: Re
   }), [apiTimeoutMs, apiUrl, configured, liveModeEnabled, runtimeConfigDiagnostic, runtimeConfigSource]);
   const formState = resolveAuthFormState(runtimeConfig, configLoading, loading);
 
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      router.replace('/dashboard');
+    }
+  }, [authLoading, isAuthenticated, router]);
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading) {
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -56,10 +67,10 @@ export default function SignUpPageClient({ previewNotice }: { previewNotice?: Re
     <main className="container authPage">
       <div className="hero">
         <div>
-          <p className="eyebrow">Pilot onboarding</p>
+          <p className="eyebrow">Workspace onboarding</p>
           <h1>Create your company workspace</h1>
           <AuthBuildBadge />
-          <p className="lede">Create the first workspace owner account for your team and start saving live pilot activity.</p>
+          <p className="lede">Create your owner account and start your first workspace for production-ready threat, compliance, and resilience operations.</p>
         </div>
       </div>
       {formState.statusMessage ? <p className="statusLine">{formState.statusMessage}</p> : null}

@@ -509,6 +509,7 @@ def build_user_response(connection: psycopg.Connection, user_id: str) -> dict[st
         'id': str(user['id']),
         'email': user['email'],
         'full_name': user['full_name'],
+        'current_workspace_id': current_workspace['id'] if current_workspace else None,
         'created_at': user['created_at'].isoformat() if hasattr(user['created_at'], 'isoformat') else str(user['created_at']),
         'updated_at': user['updated_at'].isoformat() if hasattr(user['updated_at'], 'isoformat') else str(user['updated_at']),
         'last_sign_in_at': user['last_sign_in_at'].isoformat() if user['last_sign_in_at'] else None,
@@ -642,6 +643,7 @@ def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
                 logger.exception('signin_user failed during user lookup', extra={'step': 'fetch_user_by_email', 'email': email})
                 raise
             if user is None or not verify_password(password, user['password_hash']):
+                logger.warning('signin_user rejected credentials', extra={'event': 'auth.signin.invalid_credentials', 'email': email})
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid email or password.')
             user_id = str(user['id'])
             try:
@@ -666,6 +668,8 @@ def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
             connection.commit()
             try:
                 hydrated_user = build_user_response(connection, user_id)
+                if not hydrated_user.get('current_workspace'):
+                    logger.info('signin_user completed without active workspace', extra={'event': 'auth.signin.no_workspace', 'user_id': user_id})
             except Exception:
                 logger.exception('signin_user failed during user hydration', extra={'step': 'build_user_response', 'user_id': user_id})
                 raise
@@ -681,6 +685,7 @@ def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     except Exception:
         logger.exception('signin_user failed during token creation', extra={'step': 'create_access_token', 'user_id': user_id})
         raise
+    logger.info('signin_user succeeded', extra={'event': 'auth.signin.success', 'user_id': user_id})
     return {'access_token': access_token, 'token_type': 'bearer', 'user': hydrated_user}
 
 
@@ -741,6 +746,10 @@ def create_workspace_for_user(payload: dict[str, Any], request: Request) -> dict
             metadata={'name': workspace_name, 'role': role},
         )
         connection.commit()
+        logger.info(
+            'workspace selected',
+            extra={'event': 'workspace.select.success', 'user_id': user['id'], 'workspace_id': str(workspace_id), 'role': membership['role']},
+        )
         return build_user_response(connection, user['id'])
 
 
@@ -1083,16 +1092,18 @@ def build_history_response(request: Request, limit: int = 25) -> dict[str, Any]:
             for key, value in row.items():
                 if hasattr(value, 'isoformat'):
                     item[key] = value.isoformat()
+                elif isinstance(value, uuid.UUID):
+                    item[key] = str(value)
                 else:
-                    item[key] = value
+                    item[key] = _json_safe_value(value)
             serialized.append(item)
         return serialized
 
     return {
         'mode': 'live',
-        'workspace': workspace_context['workspace'],
-        'role': workspace_context['role'],
-        'counts': counts,
+        'workspace': _json_safe_value(workspace_context['workspace']),
+        'role': str(workspace_context['role']),
+        'counts': _json_safe_value(counts),
         'analysis_runs': serialize(analysis_runs),
         'alerts': serialize(alerts),
         'governance_actions': serialize(governance_actions),

@@ -58,6 +58,12 @@ export default function HistoryRecordsView({ history, loading = false, error, wo
       {loading ? <div className="emptyStatePanel"><h2>Loading persisted records…</h2><p>We are pulling the latest saved analyses and operational events for this workspace.</p></div> : null}
       {error ? <div className="emptyStatePanel"><h2>Unable to load history</h2><p>{error}</p></div> : null}
       {!loading && !error && !history ? <div className="emptyStatePanel"><h2>No saved records yet</h2><p>Run live analyses from the threat, compliance, or resilience routes to start building a customer-ready audit trail.</p></div> : null}
+      {!loading && !error && history && history.analysis_runs.length === 0 ? (
+        <div className="emptyStatePanel">
+          <h2>No analyses yet</h2>
+          <p>No analyses yet. Run your first threat analysis.</p>
+        </div>
+      ) : null}
 
       {history && filtered ? (
         <>
@@ -75,6 +81,7 @@ export default function HistoryRecordsView({ history, loading = false, error, wo
                 <button key={item.id} type="button" className="dataCard detailButton" onClick={() => setDetailRecord({ kind: 'analysis', payload: item })}>
                   <div className="listHeader"><div><h3>{item.title}</h3><p className="muted">{item.analysis_type} · {item.service_name}</p></div><StatusBadge state={item.source === 'live' ? 'live' : 'fallback'} compact /></div>
                   <p className="explanation small">{item.summary}</p>
+                  <p className="tableMeta">{new Date(item.created_at).toLocaleString()} · {history.workspace.name} · {item.status}</p>
                 </button>
               ))}
             </div>
@@ -85,12 +92,14 @@ export default function HistoryRecordsView({ history, loading = false, error, wo
                 <button key={item.id} type="button" className="dataCard detailButton" onClick={() => setDetailRecord({ kind: 'analysis', payload: item })}>
                   <div className="listHeader"><div><h3>{item.title}</h3><p className="muted">{item.analysis_type}</p></div><StatusBadge state={item.source === 'live' ? 'live' : 'fallback'} compact /></div>
                   <p className="explanation small">{item.summary}</p>
+                  <p className="tableMeta">{new Date(item.created_at).toLocaleString()} · {history.workspace.name} · {item.status}</p>
                 </button>
               ))}
               {filtered.governanceActions.map((item) => (
                 <button key={item.id} type="button" className="dataCard detailButton" onClick={() => setDetailRecord({ kind: 'governance', payload: item })}>
                   <div className="listHeader"><div><h3>{item.action_type}</h3><p className="muted">{item.target_type} · {item.target_id}</p></div><StatusBadge state="live" compact /></div>
                   <p className="explanation small">{item.reason}</p>
+                  <p className="tableMeta">{new Date(item.created_at).toLocaleString()} · {history.workspace.name} · {item.status}</p>
                 </button>
               ))}
             </div>
@@ -101,12 +110,14 @@ export default function HistoryRecordsView({ history, loading = false, error, wo
                 <button key={item.id} type="button" className="dataCard detailButton" onClick={() => setDetailRecord({ kind: 'analysis', payload: item })}>
                   <div className="listHeader"><div><h3>{item.title}</h3><p className="muted">{item.analysis_type}</p></div><StatusBadge state={item.source === 'live' ? 'live' : 'fallback'} compact /></div>
                   <p className="explanation small">{item.summary}</p>
+                  <p className="tableMeta">{new Date(item.created_at).toLocaleString()} · {history.workspace.name} · {item.status}</p>
                 </button>
               ))}
               {filtered.incidents.map((item) => (
                 <button key={item.id} type="button" className="dataCard detailButton" onClick={() => setDetailRecord({ kind: 'incident', payload: item })}>
                   <div className="listHeader"><div><h3>{item.event_type}</h3><p className="muted">{item.severity} · {item.status}</p></div><StatusBadge state="live" compact /></div>
                   <p className="explanation small">{item.summary}</p>
+                  <p className="tableMeta">{new Date(item.created_at).toLocaleString()} · {history.workspace.name} · {item.status}</p>
                 </button>
               ))}
             </div>
