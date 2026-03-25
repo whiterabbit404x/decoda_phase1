@@ -54,7 +54,10 @@ export default function SignUpPageClient({ previewNotice }: { previewNotice?: Re
     setLoading(true);
     setError(null);
     try {
-      await signUp({ email, password, full_name: fullName, workspace_name: workspaceName });
+      const result = await signUp({ email, password, full_name: fullName, workspace_name: workspaceName });
+      if (result.verificationRequired) {
+        return;
+      }
       router.push('/dashboard');
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : String(submitError));
