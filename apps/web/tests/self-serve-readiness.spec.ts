@@ -42,4 +42,18 @@ test('dashboard and history expose self-serve onboarding and first-run empty sta
   expect(onboarding).toContain('Run your first threat analysis');
   expect(onboarding).toContain('First analysis run');
   expect(history).toContain('Run your first threat analysis');
+  expect(history).toContain('No analyses yet');
+  expect(history).toContain('history.workspace.name');
+  expect(history).toContain('item.status');
+});
+
+test('auth context and threat workflow guard session and workspace edge cases', async () => {
+  const authContext = read('pilot-auth-context.tsx');
+  const threatPanel = read('threat-demo-panel.tsx');
+
+  expect(authContext).toContain('if (response.status === 401) {');
+  expect(authContext).toContain('await signOut();');
+  expect(authContext).toContain('safeAuthFailureMessage');
+  expect(threatPanel).toContain('Select or create a workspace before running a saved analysis.');
+  expect(threatPanel).toContain("const livePrefix = isAuthenticated ? '/pilot' : '';");
 });

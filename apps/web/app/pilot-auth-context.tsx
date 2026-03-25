@@ -103,6 +103,17 @@ async function readApiResponse<T>(response: Response): Promise<Partial<T> & { de
   }
 }
 
+function safeAuthFailureMessage(message: string, fallback: string) {
+  const normalized = message.trim();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized.startsWith('{') || normalized.startsWith('[') || normalized.toLowerCase().includes('traceback')) {
+    return fallback;
+  }
+  return normalized;
+}
+
 export async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
   const response = await fetch('/api/runtime-config', {
     cache: 'no-store',
@@ -254,7 +265,8 @@ export function PilotAuthProvider({ children }: { children: React.ReactNode }) {
 
     setSessionLoading(true);
     void refreshUser().catch((fetchError) => {
-      setError(fetchError instanceof Error ? fetchError.message : String(fetchError));
+      const message = fetchError instanceof Error ? fetchError.message : String(fetchError);
+      setError(safeAuthFailureMessage(message, 'Unable to restore your session. Please sign in again.'));
       setSessionLoading(false);
     });
   }, [configLoading, refreshUser]);
@@ -356,11 +368,14 @@ export function PilotAuthProvider({ children }: { children: React.ReactNode }) {
     });
     const data = await readApiResponse<{ user?: PilotUser; detail?: string }>(response);
     if (!response.ok || !data.user) {
+      if (response.status === 401) {
+        await signOut();
+      }
       throw new Error(data.detail ?? 'Unable to create workspace.');
     }
     setUser(data.user);
     return data.user;
-  }, [authHeaders]);
+  }, [authHeaders, signOut]);
 
   const selectWorkspace = useCallback(async (workspaceId: string) => {
     const response = await fetch('/api/auth/select-workspace', {
@@ -373,11 +388,14 @@ export function PilotAuthProvider({ children }: { children: React.ReactNode }) {
     });
     const data = await readApiResponse<{ user?: PilotUser; detail?: string }>(response);
     if (!response.ok || !data.user) {
+      if (response.status === 401) {
+        await signOut();
+      }
       throw new Error(data.detail ?? 'Unable to select workspace.');
     }
     setUser(data.user);
     return data.user;
-  }, [authHeaders]);
+  }, [authHeaders, signOut]);
 
   const loading = configLoading || sessionLoading;
 

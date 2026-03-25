@@ -292,19 +292,20 @@ export default function ThreatDemoPanel({ apiUrl }: DemoPanelProps) {
 
     try {
       const scenario = sampleRequests[key];
-      const livePrefix = isAuthenticated && user?.current_workspace?.id ? '/pilot' : '';
+      if (isAuthenticated && !user?.current_workspace?.id) {
+        throw new Error('Select or create a workspace before running a saved analysis.');
+      }
+      const livePrefix = isAuthenticated ? '/pilot' : '';
       const response = await fetch(`${apiUrl}${livePrefix}/threat/analyze/${scenario.endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(scenario.body)
       });
-
+      const payload = (await response.json().catch(() => ({ detail: null }))) as DemoResult & { detail?: string | null };
       if (!response.ok) {
-        const payload = (await response.json().catch(() => ({ detail: null }))) as { detail?: string | null };
-        throw new Error(payload.detail ?? `Request failed with ${response.status}`);
+        throw new Error(payload.detail ?? 'Unable to complete threat analysis right now.');
       }
-
-      const responseResult = (await response.json()) as DemoResult;
+      const responseResult = payload as DemoResult;
       const timestamp = new Date().toISOString();
       setResult(responseResult);
       setRunMeta({

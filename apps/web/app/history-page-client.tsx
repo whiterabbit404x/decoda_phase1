@@ -56,6 +56,24 @@ export default function HistoryPageClient() {
     };
   }, [apiUrl, authHeaders, isAuthenticated, user?.current_workspace?.id]);
 
+  useEffect(() => {
+    if (loading || !isAuthenticated || user?.current_workspace || !user?.memberships?.length) {
+      return;
+    }
+    if (user.memberships.length !== 1) {
+      return;
+    }
+    setWorkspaceActionLoading(true);
+    setError(null);
+    void selectWorkspace(user.memberships[0].workspace_id)
+      .catch((selectionError) => {
+        setError(selectionError instanceof Error ? selectionError.message : String(selectionError));
+      })
+      .finally(() => {
+        setWorkspaceActionLoading(false);
+      });
+  }, [isAuthenticated, loading, selectWorkspace, user?.current_workspace, user?.memberships]);
+
   return (
     <main className="productPage">
       <div className="workspaceControlBar">

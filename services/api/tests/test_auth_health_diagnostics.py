@@ -133,6 +133,18 @@ def test_auth_signin_route_returns_json_schema_error_instead_of_500(api_main, mo
     }
 
 
+def test_health_endpoint_masks_database_url(api_main, monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(api_main.app)
+    monkeypatch.setattr(api_main, 'database_url', lambda: 'postgres://user:pass@example.internal:5432/app')
+
+    response = client.get('/health')
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload['database_url'] == '[configured]'
+    assert payload['database_url_configured'] is True
+
+
 def test_health_details_reports_pilot_and_embedded_readiness_flags(api_main, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         api_main,
