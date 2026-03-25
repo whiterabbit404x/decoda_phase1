@@ -96,13 +96,26 @@ Fast operator checks:
 4. Open `/api/build-info` on the preview deployment and verify `vercelEnv`, `branch`, `commitSha`, and the runtime config summary.
 5. If `/api/build-info` is healthy but auth still fails, the next place to check is the backend API / Railway deployment rather than the same-origin auth proxy.
 
-### What remains for full production later
+### Self-serve foundations now implemented in code
 
-- Email verification, password reset, MFA, and server-side session invalidation.
-- Stronger distributed rate limiting / shared cache instead of in-memory auth throttling.
-- Richer RBAC enforcement across every workflow action.
-- Background jobs, webhooks, and more granular per-record dashboards instead of summary persistence only.
-- Managed observability, secret rotation, and tenant billing / provisioning workflows.
+- Email verification token lifecycle (`/auth/verify-email`, `/auth/resend-verification`) and password recovery (`/auth/forgot-password`, `/auth/reset-password`).
+- Invite and team management endpoints (`/workspaces/invites`, `/workspaces/invites/accept`, `/workspaces/members`).
+- Role enforcement with owner/admin/member/viewer roles at the workspace API layer.
+- Billing foundation (`/billing/status`, `/billing/checkout-session`) with Stripe-gated behavior when credentials are absent.
+- Legal/trust/help routes in the web app (`/privacy`, `/terms`, `/security`, `/help`) and product navigation for team and billing.
+
+### Requires deployment-side configuration
+
+- SMTP credentials (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`) for verification/reset/invite emails.
+- Stripe credentials (`STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`) plus `APP_BASE_URL` for checkout return URLs.
+- Runtime app URLs (`API_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_APP_URL`, `APP_BASE_URL`) aligned across Vercel and Railway.
+
+### Remaining gaps before at-scale rollout
+
+- Add background workers/webhooks for Stripe subscription sync and invite/token cleanup.
+- Expand RBAC to every domain action endpoint with immutable permission matrix tests.
+- Add MFA, centralized session revocation, and distributed rate-limiting storage.
+- Add SLO-backed observability, key rotation automation, and longer-term compliance controls.
 
 ## Repository Layout
 

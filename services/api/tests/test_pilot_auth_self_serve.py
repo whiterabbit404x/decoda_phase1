@@ -111,8 +111,8 @@ def test_signin_success_returns_hydrated_user(pilot_module, monkeypatch: pytest.
 
     class _Connection:
         def execute(self, statement, params=None):
-            if 'SELECT id, password_hash FROM users WHERE email' in statement:
-                return _Result({'id': 'user-1', 'password_hash': 'stored'})
+            if 'SELECT id, password_hash, email_verified_at FROM users WHERE email' in statement:
+                return _Result({'id': 'user-1', 'password_hash': 'stored', 'email_verified_at': datetime(2026, 3, 24, tzinfo=timezone.utc)})
             return _Result(None)
 
         def commit(self):
@@ -204,9 +204,10 @@ def test_build_user_response_backfills_null_current_workspace_from_membership(
                     'full_name': 'Team Owner',
                     'current_workspace_id': None,
                     'created_at': datetime(2026, 3, 20, tzinfo=timezone.utc),
-                    'updated_at': datetime(2026, 3, 20, tzinfo=timezone.utc),
-                    'last_sign_in_at': None,
-                }])
+                        'updated_at': datetime(2026, 3, 20, tzinfo=timezone.utc),
+                        'last_sign_in_at': None,
+                        'email_verified_at': datetime(2026, 3, 20, tzinfo=timezone.utc),
+                    }])
             if 'FROM workspace_members' in normalized:
                 return _Result([{
                     'workspace_id': 'ws-1',
@@ -302,3 +303,66 @@ def test_build_history_response_returns_json_safe_workspace_records(
     assert payload['analysis_runs'][0]['id']
     assert payload['analysis_runs'][0]['created_at'].endswith('+00:00')
     assert isinstance(payload['counts'], dict)
+
+
+def test_signin_requires_verified_email(pilot_module, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Result:
+        def __init__(self, row=None):
+            self._row = row
+        def fetchone(self):
+            return self._row
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            if 'SELECT id, password_hash, email_verified_at FROM users WHERE email' in statement:
+                return _Result({'id': 'user-1', 'password_hash': 'stored', 'email_verified_at': None})
+            return _Result(None)
+
+    @contextmanager
+    def fake_pg():
+        yield _Connection()
+
+    monkeypatch.setattr(pilot_module, 'require_live_mode', lambda: None)
+    monkeypatch.setattr(pilot_module, 'pg_connection', fake_pg)
+    monkeypatch.setattr(pilot_module, 'ensure_pilot_schema', lambda connection: None)
+    monkeypatch.setattr(pilot_module, 'verify_password', lambda password, encoded: True)
+
+    with pytest.raises(HTTPException) as exc_info:
+        pilot_module.signin_user({'email': 'team@example.com', 'password': 'StrongPass1234'}, _request())
+    assert exc_info.value.status_code == 403
+
+
+def test_reset_password_rejects_invalid_token(pilot_module, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Result:
+        def fetchone(self):
+            return None
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            return _Result()
+
+    @contextmanager
+    def fake_pg():
+        yield _Connection()
+
+    monkeypatch.setattr(pilot_module, 'require_live_mode', lambda: None)
+    monkeypatch.setattr(pilot_module, 'pg_connection', fake_pg)
+    monkeypatch.setattr(pilot_module, 'ensure_pilot_schema', lambda connection: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        pilot_module.reset_password({'token': 'bad', 'password': 'StrongPass1234'}, _request())
+    assert exc_info.value.status_code == 400
+
+
+def test_ensure_workspace_admin_enforces_role(pilot_module) -> None:
+    class _Result:
+        def fetchone(self):
+            return {'workspace_id': 'ws-1', 'role': 'workspace_viewer', 'name': 'Ops', 'slug': 'ops'}
+
+    class _Connection:
+        def execute(self, statement, params=None):
+            return _Result()
+
+    with pytest.raises(HTTPException) as exc_info:
+        pilot_module._ensure_workspace_admin(_Connection(), 'user-1', 'ws-1')
+    assert exc_info.value.status_code == 403

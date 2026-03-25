@@ -7,18 +7,23 @@ import json
 import logging
 import os
 import secrets
+import smtplib
 import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from time import monotonic
 from typing import Any, Iterable
+from urllib.parse import urlencode
+from urllib.request import Request as UrlRequest, urlopen
 
 import importlib
 from fastapi import HTTPException, Request, status
 
-ROLE_VALUES = {'workspace_owner', 'workspace_admin', 'workspace_member'}
+ROLE_VALUES = {'workspace_owner', 'workspace_admin', 'workspace_member', 'workspace_viewer'}
+ADMIN_ROLE_VALUES = {'workspace_owner', 'workspace_admin'}
 AUTH_WINDOW_SECONDS = 60
 AUTH_MAX_ATTEMPTS = 10
 CORE_PILOT_TABLES = (
@@ -31,6 +36,8 @@ CORE_PILOT_TABLES = (
     'governance_actions',
     'incidents',
     'audit_logs',
+    'workspace_invites',
+    'workspace_billing',
 )
 DEFAULT_DEMO_EMAIL = 'demo@decoda.app'
 _rate_limit_lock = threading.Lock()
@@ -428,6 +435,60 @@ def _ensure_membership(connection: Any, user_id: str, workspace_id: str) -> dict
     return membership
 
 
+def _ensure_workspace_admin(connection: Any, user_id: str, workspace_id: str) -> dict[str, Any]:
+    membership = _ensure_membership(connection, user_id, workspace_id)
+    if membership['role'] not in ADMIN_ROLE_VALUES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Workspace admin access is required.')
+    return membership
+
+
+def _hash_one_time_token(token: str) -> str:
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+
+def _create_one_time_token() -> tuple[str, str]:
+    token = secrets.token_urlsafe(32)
+    return token, _hash_one_time_token(token)
+
+
+def _email_base_url() -> str:
+    raw = os.getenv('APP_BASE_URL', '').strip() or os.getenv('NEXT_PUBLIC_APP_URL', '').strip()
+    return raw.rstrip('/')
+
+
+def _dispatch_email(*, to_email: str, subject: str, body: str) -> bool:
+    smtp_host = os.getenv('SMTP_HOST', '').strip()
+    smtp_port = int(os.getenv('SMTP_PORT', '587'))
+    smtp_username = os.getenv('SMTP_USERNAME', '').strip()
+    smtp_password = os.getenv('SMTP_PASSWORD', '').strip()
+    sender = os.getenv('SMTP_FROM_EMAIL', '').strip() or 'no-reply@decoda.app'
+    if not smtp_host:
+        logger.info('email skipped because SMTP_HOST missing', extra={'event': 'email.skipped', 'to': to_email, 'subject': subject})
+        return False
+    message = EmailMessage()
+    message['Subject'] = subject
+    message['From'] = sender
+    message['To'] = to_email
+    message.set_content(body)
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as smtp:
+        smtp.starttls()
+        if smtp_username and smtp_password:
+            smtp.login(smtp_username, smtp_password)
+        smtp.send_message(message)
+    return True
+
+
+def _deliver_email_verification(email: str, token: str) -> dict[str, Any]:
+    verify_link = f"{_email_base_url()}/verify-email?token={token}" if _email_base_url() else f"/verify-email?token={token}"
+    body = (
+        'Welcome to Decoda RWA Guard.\n\n'
+        f'Verify your email address to activate your account:\n{verify_link}\n\n'
+        'If you did not request this account, ignore this email.'
+    )
+    delivered = _dispatch_email(to_email=email, subject='Verify your Decoda account', body=body)
+    return {'delivered': delivered, 'verify_link': verify_link}
+
+
 def log_audit(
     connection: Any,
     *,
@@ -460,7 +521,7 @@ def log_audit(
 def build_user_response(connection: psycopg.Connection, user_id: str) -> dict[str, Any]:
     user = connection.execute(
         '''
-        SELECT id, email, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at
+        SELECT id, email, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at, email_verified_at
         FROM users
         WHERE id = %s
         ''',
@@ -530,6 +591,8 @@ def build_user_response(connection: psycopg.Connection, user_id: str) -> dict[st
         'created_at': user['created_at'].isoformat() if hasattr(user['created_at'], 'isoformat') else str(user['created_at']),
         'updated_at': user['updated_at'].isoformat() if hasattr(user['updated_at'], 'isoformat') else str(user['updated_at']),
         'last_sign_in_at': user['last_sign_in_at'].isoformat() if user['last_sign_in_at'] else None,
+        'email_verified_at': user['email_verified_at'].isoformat() if user['email_verified_at'] else None,
+        'email_verified': bool(user['email_verified_at']),
         'current_workspace': current_workspace,
         'memberships': membership_payload,
     }
@@ -604,12 +667,16 @@ def signup_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
         while connection.execute('SELECT 1 FROM workspaces WHERE slug = %s', (slug,)).fetchone() is not None:
             suffix += 1
             slug = f'{slug_base}-{suffix}'
+        verification_token, verification_token_hash = _create_one_time_token()
         connection.execute(
             '''
-            INSERT INTO users (id, email, password_hash, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at)
-            VALUES (%s, %s, %s, %s, %s, NOW(), NOW(), NOW())
+            INSERT INTO users (
+                id, email, password_hash, full_name, current_workspace_id, created_at, updated_at, last_sign_in_at,
+                email_verification_token_hash, email_verification_sent_at, email_verification_expires_at
+            )
+            VALUES (%s, %s, %s, %s, %s, NOW(), NOW(), NOW(), %s, NOW(), NOW() + INTERVAL '24 hours')
             ''',
-            (user_id, email, password_hash, full_name, None),
+            (user_id, email, password_hash, full_name, None, verification_token_hash),
         )
         connection.execute(
             '''
@@ -641,7 +708,15 @@ def signup_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
         )
         connection.commit()
         user = build_user_response(connection, user_id)
-    return {'access_token': create_access_token(user_id), 'token_type': 'bearer', 'user': user}
+    email_delivery = _deliver_email_verification(email, verification_token)
+    return {
+        'access_token': create_access_token(user_id),
+        'token_type': 'bearer',
+        'user': user,
+        'verification_required': True,
+        'email_delivery': {'delivered': email_delivery['delivered']},
+        'verification_preview_token': verification_token if not email_delivery['delivered'] else None,
+    }
 
 
 def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
@@ -653,7 +728,7 @@ def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
             ensure_pilot_schema(connection)
             try:
                 user = connection.execute(
-                    'SELECT id, password_hash FROM users WHERE email = %s',
+                    'SELECT id, password_hash, email_verified_at FROM users WHERE email = %s',
                     (email,),
                 ).fetchone()
             except Exception:
@@ -662,6 +737,8 @@ def signin_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
             if user is None or not verify_password(password, user['password_hash']):
                 logger.warning('signin_user rejected credentials', extra={'event': 'auth.signin.invalid_credentials', 'email': email})
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid email or password.')
+            if not user['email_verified_at']:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Verify your email before signing in.')
             user_id = str(user['id'])
             try:
                 connection.execute('UPDATE users SET last_sign_in_at = NOW(), updated_at = NOW() WHERE id = %s', (user_id,))
@@ -723,6 +800,125 @@ def signout_user(request: Request) -> dict[str, Any]:
         )
         connection.commit()
     return {'signed_out': True}
+
+
+def verify_email_token(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    token = str(payload.get('token', '')).strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Verification token is required.')
+    token_hash = _hash_one_time_token(token)
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        user = connection.execute(
+            '''
+            SELECT id, email, email_verification_expires_at, email_verified_at
+            FROM users
+            WHERE email_verification_token_hash = %s
+            ''',
+            (token_hash,),
+        ).fetchone()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid verification token.')
+        if user['email_verified_at']:
+            return {'verified': True, 'already_verified': True}
+        if user['email_verification_expires_at'] and user['email_verification_expires_at'] < utc_now():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Verification token expired.')
+        connection.execute(
+            '''
+            UPDATE users
+            SET email_verified_at = NOW(),
+                email_verification_token_hash = NULL,
+                email_verification_expires_at = NULL,
+                updated_at = NOW()
+            WHERE id = %s
+            ''',
+            (str(user['id']),),
+        )
+        log_audit(connection, action='auth.verify_email', entity_type='user', entity_id=str(user['id']), request=request, user_id=str(user['id']), workspace_id=None, metadata={})
+        connection.commit()
+    return {'verified': True, 'already_verified': False}
+
+
+def resend_verification(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    email = _normalize_email(str(payload.get('email', '')))
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        user = connection.execute('SELECT id, email_verified_at FROM users WHERE email = %s', (email,)).fetchone()
+        if user is None:
+            return {'resent': True}
+        if user['email_verified_at']:
+            return {'resent': True, 'already_verified': True}
+        token, token_hash = _create_one_time_token()
+        connection.execute(
+            '''
+            UPDATE users
+            SET email_verification_token_hash = %s,
+                email_verification_sent_at = NOW(),
+                email_verification_expires_at = NOW() + INTERVAL '24 hours',
+                updated_at = NOW()
+            WHERE id = %s
+            ''',
+            (token_hash, str(user['id'])),
+        )
+        log_audit(connection, action='auth.resend_verification', entity_type='user', entity_id=str(user['id']), request=request, user_id=str(user['id']), workspace_id=None, metadata={})
+        connection.commit()
+    email_delivery = _deliver_email_verification(email, token)
+    return {'resent': True, 'email_delivery': {'delivered': email_delivery['delivered']}, 'verification_preview_token': token if not email_delivery['delivered'] else None}
+
+
+def forgot_password(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    email = _normalize_email(str(payload.get('email', '')))
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        user = connection.execute('SELECT id FROM users WHERE email = %s', (email,)).fetchone()
+        if user is None:
+            return {'requested': True}
+        token, token_hash = _create_one_time_token()
+        connection.execute(
+            '''
+            UPDATE users
+            SET password_reset_token_hash = %s, password_reset_sent_at = NOW(), password_reset_expires_at = NOW() + INTERVAL '1 hour', updated_at = NOW()
+            WHERE id = %s
+            ''',
+            (token_hash, str(user['id'])),
+        )
+        log_audit(connection, action='auth.forgot_password', entity_type='user', entity_id=str(user['id']), request=request, user_id=str(user['id']), workspace_id=None, metadata={})
+        connection.commit()
+    reset_link = f"{_email_base_url()}/reset-password?token={token}" if _email_base_url() else f"/reset-password?token={token}"
+    delivered = _dispatch_email(to_email=email, subject='Reset your Decoda password', body=f'Use this link to reset your password:\n{reset_link}')
+    return {'requested': True, 'email_delivery': {'delivered': delivered}, 'reset_preview_token': token if not delivered else None}
+
+
+def reset_password(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    token = str(payload.get('token', '')).strip()
+    password = str(payload.get('password', ''))
+    _require_password(password)
+    token_hash = _hash_one_time_token(token)
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        user = connection.execute(
+            'SELECT id, password_reset_expires_at FROM users WHERE password_reset_token_hash = %s',
+            (token_hash,),
+        ).fetchone()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid password reset token.')
+        if user['password_reset_expires_at'] and user['password_reset_expires_at'] < utc_now():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Password reset token expired.')
+        connection.execute(
+            '''
+            UPDATE users
+            SET password_hash = %s, password_reset_token_hash = NULL, password_reset_expires_at = NULL, updated_at = NOW()
+            WHERE id = %s
+            ''',
+            (hash_password(password), str(user['id'])),
+        )
+        log_audit(connection, action='auth.reset_password', entity_type='user', entity_id=str(user['id']), request=request, user_id=str(user['id']), workspace_id=None, metadata={})
+        connection.commit()
+    return {'reset': True}
 
 
 def create_workspace_for_user(payload: dict[str, Any], request: Request) -> dict[str, Any]:
@@ -801,6 +997,127 @@ def list_user_workspaces(request: Request) -> dict[str, Any]:
         ensure_pilot_schema(connection)
         user = authenticate_with_connection(connection, request)
         return {'workspaces': user['memberships'], 'current_workspace': user['current_workspace']}
+
+
+def create_workspace_invite(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    email = _normalize_email(str(payload.get('email', '')))
+    role = str(payload.get('role', 'workspace_member')).strip() or 'workspace_member'
+    if role not in ROLE_VALUES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid workspace role.')
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        actor = authenticate_with_connection(connection, request)
+        workspace_context = resolve_workspace(connection, actor['id'], request.headers.get('x-workspace-id'))
+        _ensure_workspace_admin(connection, actor['id'], workspace_context['workspace_id'])
+        token, token_hash = _create_one_time_token()
+        invite_id = str(uuid.uuid4())
+        connection.execute(
+            '''
+            INSERT INTO workspace_invites (id, workspace_id, invited_email, invited_role, invite_token_hash, invited_by_user_id, status, created_at, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s, 'pending', NOW(), NOW() + INTERVAL '7 days')
+            ''',
+            (invite_id, workspace_context['workspace_id'], email, role, token_hash, actor['id']),
+        )
+        log_audit(connection, action='workspace.invite.create', entity_type='workspace_invite', entity_id=invite_id, request=request, user_id=actor['id'], workspace_id=workspace_context['workspace_id'], metadata={'email': email, 'role': role})
+        connection.commit()
+    invite_link = f"{_email_base_url()}/accept-invite?token={token}" if _email_base_url() else f"/accept-invite?token={token}"
+    delivered = _dispatch_email(to_email=email, subject='You are invited to Decoda RWA Guard', body=f'Accept your invite:\n{invite_link}')
+    return {'invite_id': invite_id, 'status': 'pending', 'email_delivery': {'delivered': delivered}, 'invite_preview_token': token if not delivered else None}
+
+
+def accept_workspace_invite(payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    token = str(payload.get('token', '')).strip()
+    if not token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invite token is required.')
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        user = authenticate_with_connection(connection, request)
+        token_hash = _hash_one_time_token(token)
+        invite = connection.execute(
+            '''
+            SELECT id, workspace_id, invited_email, invited_role, status, expires_at
+            FROM workspace_invites
+            WHERE invite_token_hash = %s
+            ''',
+            (token_hash,),
+        ).fetchone()
+        if invite is None or invite['status'] != 'pending':
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid invite token.')
+        if invite['expires_at'] and invite['expires_at'] < utc_now():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invite token expired.')
+        if user['email'].lower() != str(invite['invited_email']).lower():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='This invite was issued for a different email address.')
+        connection.execute(
+            '''
+            INSERT INTO workspace_members (id, workspace_id, user_id, role, created_at)
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role
+            ''',
+            (str(uuid.uuid4()), str(invite['workspace_id']), user['id'], invite['invited_role']),
+        )
+        connection.execute(
+            "UPDATE workspace_invites SET status = 'accepted', accepted_at = NOW(), accepted_by_user_id = %s WHERE id = %s",
+            (user['id'], str(invite['id'])),
+        )
+        connection.execute('UPDATE users SET current_workspace_id = %s, updated_at = NOW() WHERE id = %s', (str(invite['workspace_id']), user['id']))
+        log_audit(connection, action='workspace.invite.accept', entity_type='workspace_invite', entity_id=str(invite['id']), request=request, user_id=user['id'], workspace_id=str(invite['workspace_id']), metadata={})
+        connection.commit()
+        refreshed = build_user_response(connection, user['id'])
+    return {'accepted': True, 'user': refreshed}
+
+
+def list_workspace_members(request: Request) -> dict[str, Any]:
+    require_live_mode()
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        actor = authenticate_with_connection(connection, request)
+        workspace_context = resolve_workspace(connection, actor['id'], request.headers.get('x-workspace-id'))
+        rows = connection.execute(
+            '''
+            SELECT wm.user_id, wm.role, wm.created_at, users.email, users.full_name
+            FROM workspace_members wm
+            JOIN users ON users.id = wm.user_id
+            WHERE wm.workspace_id = %s
+            ORDER BY wm.created_at ASC
+            ''',
+            (workspace_context['workspace_id'],),
+        ).fetchall()
+        return {'members': _json_safe_value(rows), 'workspace': workspace_context['workspace']}
+
+
+def update_workspace_member_role(member_user_id: str, payload: dict[str, Any], request: Request) -> dict[str, Any]:
+    require_live_mode()
+    next_role = str(payload.get('role', '')).strip()
+    if next_role not in ROLE_VALUES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Invalid workspace role.')
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        actor = authenticate_with_connection(connection, request)
+        workspace_context = resolve_workspace(connection, actor['id'], request.headers.get('x-workspace-id'))
+        _ensure_workspace_admin(connection, actor['id'], workspace_context['workspace_id'])
+        connection.execute(
+            'UPDATE workspace_members SET role = %s WHERE workspace_id = %s AND user_id = %s',
+            (next_role, workspace_context['workspace_id'], member_user_id),
+        )
+        log_audit(connection, action='workspace.member.role_update', entity_type='workspace_member', entity_id=member_user_id, request=request, user_id=actor['id'], workspace_id=workspace_context['workspace_id'], metadata={'role': next_role})
+        connection.commit()
+    return {'updated': True}
+
+
+def remove_workspace_member(member_user_id: str, request: Request) -> dict[str, Any]:
+    require_live_mode()
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        actor = authenticate_with_connection(connection, request)
+        workspace_context = resolve_workspace(connection, actor['id'], request.headers.get('x-workspace-id'))
+        _ensure_workspace_admin(connection, actor['id'], workspace_context['workspace_id'])
+        connection.execute('DELETE FROM workspace_members WHERE workspace_id = %s AND user_id = %s', (workspace_context['workspace_id'], member_user_id))
+        connection.execute('UPDATE users SET current_workspace_id = NULL, updated_at = NOW() WHERE id = %s AND current_workspace_id = %s', (member_user_id, workspace_context['workspace_id']))
+        log_audit(connection, action='workspace.member.remove', entity_type='workspace_member', entity_id=member_user_id, request=request, user_id=actor['id'], workspace_id=workspace_context['workspace_id'], metadata={})
+        connection.commit()
+    return {'removed': True}
 
 
 def seed_demo_workspace(email: str, password: str, workspace_name: str, full_name: str = 'Pilot Demo User') -> dict[str, Any]:
@@ -889,6 +1206,69 @@ def seed_demo_workspace(email: str, password: str, workspace_name: str, full_nam
             'membership_created': membership_created,
             'user_created': created_user,
         }
+
+
+def _stripe_secret_key() -> str | None:
+    value = os.getenv('STRIPE_SECRET_KEY', '').strip()
+    return value or None
+
+
+def _stripe_enabled() -> bool:
+    return _stripe_secret_key() is not None and bool(os.getenv('STRIPE_PRICE_ID', '').strip())
+
+
+def _stripe_post(path: str, fields: dict[str, str]) -> dict[str, Any]:
+    key = _stripe_secret_key()
+    if not key:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Billing is not configured.')
+    payload = urlencode(fields).encode('utf-8')
+    req = UrlRequest(f'https://api.stripe.com/v1/{path}', data=payload, method='POST')
+    req.add_header('Authorization', f'Bearer {key}')
+    req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+    with urlopen(req, timeout=10) as response:
+        return json.loads(response.read().decode('utf-8'))
+
+
+def billing_status(request: Request) -> dict[str, Any]:
+    require_live_mode()
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        actor = authenticate_with_connection(connection, request)
+        workspace_context = resolve_workspace(connection, actor['id'], request.headers.get('x-workspace-id'))
+        row = connection.execute(
+            '''
+            SELECT plan_code, trial_ends_at, subscription_status, stripe_customer_id, stripe_subscription_id, updated_at
+            FROM workspace_billing WHERE workspace_id = %s
+            ''',
+            (workspace_context['workspace_id'],),
+        ).fetchone()
+        if row is None:
+            return {'workspace': workspace_context['workspace'], 'billing': {'plan_code': 'trial', 'subscription_status': 'not_started', 'trial_ends_at': None, 'stripe_enabled': _stripe_enabled()}}
+        return {'workspace': workspace_context['workspace'], 'billing': {**_json_safe_value(row), 'stripe_enabled': _stripe_enabled()}}
+
+
+def create_billing_checkout_session(request: Request) -> dict[str, Any]:
+    require_live_mode()
+    if not _stripe_enabled():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Billing is not configured.')
+    with pg_connection() as connection:
+        ensure_pilot_schema(connection)
+        actor = authenticate_with_connection(connection, request)
+        workspace_context = resolve_workspace(connection, actor['id'], request.headers.get('x-workspace-id'))
+        _ensure_workspace_admin(connection, actor['id'], workspace_context['workspace_id'])
+        row = connection.execute('SELECT stripe_customer_id FROM workspace_billing WHERE workspace_id = %s', (workspace_context['workspace_id'],)).fetchone()
+        customer_id = str(row['stripe_customer_id']) if row and row['stripe_customer_id'] else ''
+        session = _stripe_post('checkout/sessions', {
+            'mode': 'subscription',
+            'success_url': f"{_email_base_url()}/billing?checkout=success",
+            'cancel_url': f"{_email_base_url()}/billing?checkout=cancelled",
+            'line_items[0][price]': os.getenv('STRIPE_PRICE_ID', '').strip(),
+            'line_items[0][quantity]': '1',
+            **({'customer': customer_id} if customer_id else {'customer_email': actor['email']}),
+        })
+        log_audit(connection, action='billing.checkout.created', entity_type='workspace', entity_id=workspace_context['workspace_id'], request=request, user_id=actor['id'], workspace_id=workspace_context['workspace_id'], metadata={})
+        connection.commit()
+    return {'url': session.get('url')}
 
 
 def persist_analysis_run(

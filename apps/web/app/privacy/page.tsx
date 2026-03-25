@@ -1,0 +1,1 @@
+export default function PrivacyPage() { return <main className="container"><section className="dataCard"><h1>Privacy Policy</h1><p>We process account and workspace data to operate Decoda RWA Guard. We do not sell personal data.</p></section></main>; }

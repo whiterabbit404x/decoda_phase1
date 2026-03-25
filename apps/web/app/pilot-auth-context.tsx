@@ -41,7 +41,7 @@ export type WorkspaceSummary = {
 
 export type WorkspaceMembership = {
   workspace_id: string;
-  role: 'workspace_owner' | 'workspace_admin' | 'workspace_member';
+  role: 'workspace_owner' | 'workspace_admin' | 'workspace_member' | 'workspace_viewer';
   created_at: string;
   workspace: WorkspaceSummary;
 };
@@ -54,6 +54,8 @@ export type PilotUser = {
   created_at: string;
   updated_at: string;
   last_sign_in_at: string | null;
+  email_verified_at?: string | null;
+  email_verified?: boolean;
   current_workspace: WorkspaceSummary | null;
   memberships: WorkspaceMembership[];
 };
@@ -74,6 +76,10 @@ type PilotAuthContextValue = {
   isAuthenticated: boolean;
   signIn: (payload: { email: string; password: string }) => Promise<PilotUser>;
   signUp: (payload: { email: string; password: string; full_name: string; workspace_name: string }) => Promise<PilotUser>;
+  verifyEmail: (token: string) => Promise<{ verified: boolean; already_verified?: boolean }>;
+  resendVerification: (email: string) => Promise<{ resent: boolean }>;
+  forgotPassword: (email: string) => Promise<{ requested: boolean }>;
+  resetPassword: (token: string, password: string) => Promise<{ reset: boolean }>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<PilotUser | null>;
   createWorkspace: (name: string) => Promise<PilotUser>;
@@ -296,6 +302,7 @@ export function PilotAuthProvider({ children }: { children: React.ReactNode }) {
     const data = await readApiResponse<{
       access_token?: string;
       user?: PilotUser;
+      verification_required?: boolean;
       detail?: string;
       authTransport?: string;
       backendApiUrl?: string | null;
@@ -332,8 +339,17 @@ export function PilotAuthProvider({ children }: { children: React.ReactNode }) {
       configured?: boolean;
       code?: string;
     }>(response);
-    if (!response.ok || !data.access_token || !data.user) {
+    if (!response.ok || !data.user) {
       throw new Error(classifyAuthResponseError('create an account', proxyUrl, response.status, data.detail, data));
+    }
+    if (data.verification_required) {
+      setToken(null);
+      setUser(null);
+      setError('Account created. Verify your email before signing in.');
+      return data.user;
+    }
+    if (!data.access_token) {
+      throw new Error('Account created but no session token was returned.');
     }
     saveAuthPayload(data.access_token, data.user);
     return data.user;
@@ -355,6 +371,42 @@ export function PilotAuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setError(null);
     setSessionLoading(false);
+  }, []);
+
+  const verifyEmail = useCallback(async (token: string) => {
+    const response = await fetch('/api/auth/verify-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+    const data = await readApiResponse<{ verified?: boolean; already_verified?: boolean; detail?: string }>(response);
+    if (!response.ok || !data.verified) {
+      throw new Error(data.detail ?? 'Unable to verify email.');
+    }
+    return { verified: true, already_verified: data.already_verified };
+  }, []);
+
+  const resendVerification = useCallback(async (email: string) => {
+    const response = await fetch('/api/auth/resend-verification', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    const data = await readApiResponse<{ resent?: boolean; detail?: string }>(response);
+    if (!response.ok || !data.resent) {
+      throw new Error(data.detail ?? 'Unable to resend verification email.');
+    }
+    return { resent: true };
+  }, []);
+
+  const forgotPassword = useCallback(async (email: string) => {
+    const response = await fetch('/api/auth/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    const data = await readApiResponse<{ requested?: boolean; detail?: string }>(response);
+    if (!response.ok || !data.requested) {
+      throw new Error(data.detail ?? 'Unable to request password reset.');
+    }
+    return { requested: true };
+  }, []);
+
+  const resetPassword = useCallback(async (token: string, password: string) => {
+    const response = await fetch('/api/auth/reset-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, password }) });
+    const data = await readApiResponse<{ reset?: boolean; detail?: string }>(response);
+    if (!response.ok || !data.reset) {
+      throw new Error(data.detail ?? 'Unable to reset password.');
+    }
+    return { reset: true };
   }, []);
 
   const createWorkspace = useCallback(async (name: string) => {
@@ -415,13 +467,17 @@ export function PilotAuthProvider({ children }: { children: React.ReactNode }) {
     isAuthenticated: Boolean(token && user),
     signIn,
     signUp,
+    verifyEmail,
+    resendVerification,
+    forgotPassword,
+    resetPassword,
     signOut,
     refreshUser,
     createWorkspace,
     selectWorkspace,
     authHeaders,
     setError,
-  }), [authHeaders, configLoading, createWorkspace, error, loading, refreshUser, runtimeConfig, selectWorkspace, signIn, signOut, signUp, token, user]);
+  }), [authHeaders, configLoading, createWorkspace, error, forgotPassword, loading, refreshUser, resendVerification, resetPassword, runtimeConfig, selectWorkspace, signIn, signOut, signUp, token, user, verifyEmail]);
 
   return <PilotAuthContext.Provider value={value}>{children}</PilotAuthContext.Provider>;
 }

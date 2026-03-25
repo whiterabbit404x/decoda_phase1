@@ -1,0 +1,1 @@
+export default function HelpPage() { return <main className="container"><section className="dataCard"><h1>Help / Support</h1><p>Email support@decoda.app for onboarding, incident support, and billing assistance.</p></section></main>; }

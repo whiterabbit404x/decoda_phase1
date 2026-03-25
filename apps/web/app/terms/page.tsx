@@ -1,0 +1,1 @@
+export default function TermsPage() { return <main className="container"><section className="dataCard"><h1>Terms of Service</h1><p>Use of Decoda RWA Guard is subject to your enterprise agreement and acceptable use obligations.</p></section></main>; }
