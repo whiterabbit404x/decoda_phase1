@@ -213,3 +213,135 @@ def test_feature2_remote_dashboard_preserves_true_fallback_payload_when_upstream
     assert body['degraded'] is True
     assert body['message'] == fallback_payload['message']
     assert all(alert['source'] == 'fallback' for alert in body['active_alerts'])
+
+
+def test_threat_analysis_endpoints_normalize_legacy_payload_before_proxy(client: TestClient, api_main, monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        'target_id': 'legacy-target',
+        'target_name': 'Legacy wallet',
+        'chain_network': 'ethereum',
+        'target_type': 'wallet',
+        'wallet_address': '0x1111111111111111111111111111111111111111',
+        'module_config': {'large_transfer_threshold': 250000},
+        'flags': {'contains_flash_loan': True, 'rapid_drain_indicator': True},
+    }
+    captured: dict[str, Any] = {}
+
+    def _proxy(kind: str, body: dict[str, Any]) -> dict[str, Any]:
+        captured['kind'] = kind
+        captured['body'] = body
+        return {
+            'analysis_type': kind,
+            'score': 82,
+            'severity': 'critical',
+            'matched_patterns': [],
+            'explanation': 'live',
+            'recommended_action': 'block',
+            'reasons': [],
+            'metadata': {'source': 'live'},
+            'source': 'live',
+            'degraded': False,
+        }
+
+    monkeypatch.setattr(api_main, 'proxy_threat', _proxy)
+    response = client.post('/threat/analyze/transaction', json=payload)
+    assert response.status_code == 200
+    assert captured['kind'] == 'transaction'
+    assert captured['body']['wallet'] == payload['wallet_address']
+    assert captured['body']['metadata']['target_id'] == 'legacy-target'
+    assert captured['body']['metadata']['module_config']['large_transfer_threshold'] == 250000
+    assert captured['body']['flags']['contains_flash_loan'] is True
+
+
+@pytest.mark.parametrize(
+    ('endpoint', 'payload_key', 'required_keys'),
+    [
+        ('/threat/analyze/transaction', 'transaction', {'wallet', 'actor', 'action_type', 'protocol', 'amount', 'flags', 'metadata'}),
+        ('/threat/analyze/contract', 'contract', {'contract_name', 'address', 'function_summaries', 'findings', 'flags', 'metadata'}),
+        ('/threat/analyze/market', 'market', {'asset', 'venue', 'timeframe_minutes', 'order_flow_summary', 'candles', 'wallet_activity', 'metadata'}),
+    ],
+)
+def test_threat_analysis_preserves_valid_schema_for_live_path(
+    client: TestClient,
+    api_main,
+    sample_payloads: dict[str, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    payload_key: str,
+    required_keys: set[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _proxy(kind: str, body: dict[str, Any]) -> dict[str, Any]:
+        captured['body'] = body
+        return {
+            'analysis_type': kind,
+            'score': 66,
+            'severity': 'high',
+            'matched_patterns': [{'pattern_id': 'p1', 'label': 'Live path', 'weight': 20, 'severity': 'high', 'reason': 'shape valid', 'evidence': {}}],
+            'explanation': 'shape valid',
+            'recommended_action': 'review',
+            'reasons': ['shape valid'],
+            'metadata': {'source': 'live'},
+            'source': 'live',
+            'degraded': False,
+        }
+
+    monkeypatch.setattr(api_main, 'proxy_threat', _proxy)
+    response = client.post(endpoint, json=sample_payloads[payload_key])
+    assert response.status_code == 200
+    body = response.json()
+    assert body['source'] == 'live'
+    assert body['degraded'] is False
+    assert required_keys.issubset(captured['body'].keys())
+
+
+def test_fallback_transaction_uses_normalized_flags_for_non_zero_scoring(client: TestClient, api_main, monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {
+        'target_id': 'legacy-target',
+        'target_name': 'Legacy wallet',
+        'chain_network': 'ethereum',
+        'target_type': 'wallet',
+        'wallet_address': '0x1111111111111111111111111111111111111111',
+        'flags': {
+            'contains_flash_loan': True,
+            'rapid_drain_indicator': True,
+            'unexpected_admin_call': True,
+        },
+        'call_sequence': ['borrow', 'swap', 'repay'],
+        'amount': 1_250_000,
+    }
+    monkeypatch.setattr(api_main, 'proxy_threat', lambda kind, body: None)
+    response = client.post('/threat/analyze/transaction', json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body['source'] == 'fallback'
+    assert body['degraded'] is True
+    assert body['score'] > 0
+
+
+def test_pilot_threat_persists_normalized_payload(client: TestClient, api_main, monkeypatch: pytest.MonkeyPatch) -> None:
+    request_payload = {
+        'target_id': 'legacy-target',
+        'target_name': 'Legacy contract',
+        'target_type': 'contract',
+        'chain_network': 'ethereum',
+        'contract_identifier': '0x2222222222222222222222222222222222222222',
+        'module_config': {'unknown_target_threshold': 3},
+    }
+    captured: dict[str, Any] = {}
+
+    def _persist(request, payload, response_payload, **kwargs):  # type: ignore[no-untyped-def]
+        captured['payload'] = payload
+        return response_payload
+
+    monkeypatch.setattr(api_main, 'live_mode_enabled', lambda: True)
+    monkeypatch.setattr(api_main, 'proxy_threat', lambda kind, body: None)
+    monkeypatch.setattr(api_main, 'fallback_contract_analysis', lambda body: {'analysis_type': 'contract', 'score': 10, 'severity': 'low', 'matched_patterns': [], 'explanation': 'fallback', 'recommended_action': 'allow', 'reasons': [], 'metadata': {'source': 'fallback'}, 'source': 'fallback', 'degraded': True})
+    monkeypatch.setattr(api_main, '_persist_live_analysis', _persist)
+
+    response = client.post('/pilot/threat/analyze/contract', json=request_payload, headers={'authorization': 'Bearer token', 'x-workspace-id': 'workspace'})
+    assert response.status_code == 200
+    assert captured['payload']['contract_name'] == 'Legacy contract'
+    assert captured['payload']['address'] == request_payload['contract_identifier']
+    assert captured['payload']['metadata']['original_ui_request']['target_id'] == 'legacy-target'
