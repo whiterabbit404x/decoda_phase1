@@ -123,6 +123,7 @@ from services.api.app.pilot import (
     get_onboarding_state,
     update_onboarding_state,
 )
+from services.api.app.threat_payloads import normalize_threat_payload
 
 
 def _find_repo_root(start: Path) -> Path:
@@ -1192,20 +1193,23 @@ def threat_dashboard() -> dict[str, Any]:
 
 @app.post('/threat/analyze/contract', summary='Feature 2 contract analysis', description='Proxies a contract analysis request to the threat-engine and falls back to a conservative local rule summary if the engine is unavailable.')
 def threat_analyze_contract(payload: dict[str, Any]) -> dict[str, Any]:
-    response = proxy_threat('contract', payload)
-    return response or fallback_contract_analysis(payload)
+    normalized, _ = normalize_threat_payload('contract', payload)
+    response = proxy_threat('contract', normalized)
+    return response or fallback_contract_analysis(normalized)
 
 
 @app.post('/threat/analyze/transaction', summary='Feature 2 transaction analysis', description='Proxies a transaction intent analysis request to the threat-engine and falls back to a conservative local rule summary if the engine is unavailable.')
 def threat_analyze_transaction(payload: dict[str, Any]) -> dict[str, Any]:
-    response = proxy_threat('transaction', payload)
-    return response or fallback_transaction_analysis(payload)
+    normalized, _ = normalize_threat_payload('transaction', payload)
+    response = proxy_threat('transaction', normalized)
+    return response or fallback_transaction_analysis(normalized)
 
 
 @app.post('/threat/analyze/market', summary='Feature 2 market anomaly analysis', description='Proxies a market anomaly request to the threat-engine and falls back to a conservative local rule summary if the engine is unavailable.')
 def threat_analyze_market(payload: dict[str, Any]) -> dict[str, Any]:
-    response = proxy_threat('market', payload)
-    return response or fallback_market_analysis(payload)
+    normalized, _ = normalize_threat_payload('market', payload)
+    response = proxy_threat('market', normalized)
+    return response or fallback_market_analysis(normalized)
 
 
 @app.get('/compliance/dashboard', summary='Feature 3 compliance dashboard feed', description='Returns the compliance-service dashboard payload when available and explicit fallback demo data when the compliance service is unavailable.')
@@ -1801,20 +1805,23 @@ def _persist_live_analysis(request: Request, payload: dict[str, Any], response_p
 
 @app.post('/pilot/threat/analyze/contract', summary='Run and persist a contract threat analysis for live mode')
 def pilot_threat_analyze_contract(payload: dict[str, Any], request: Request) -> dict[str, Any]:
-    response = proxy_threat('contract', payload) or fallback_contract_analysis(payload)
-    return _persist_live_analysis(request, payload, response, analysis_type='threat_contract', service_name='threat-engine', title='Threat contract analysis')
+    normalized, _ = normalize_threat_payload('contract', payload, include_original=True)
+    response = proxy_threat('contract', normalized) or fallback_contract_analysis(normalized)
+    return _persist_live_analysis(request, normalized, response, analysis_type='threat_contract', service_name='threat-engine', title='Threat contract analysis')
 
 
 @app.post('/pilot/threat/analyze/transaction', summary='Run and persist a transaction threat analysis for live mode')
 def pilot_threat_analyze_transaction(payload: dict[str, Any], request: Request) -> dict[str, Any]:
-    response = proxy_threat('transaction', payload) or fallback_transaction_analysis(payload)
-    return _persist_live_analysis(request, payload, response, analysis_type='threat_transaction', service_name='threat-engine', title='Threat transaction analysis')
+    normalized, _ = normalize_threat_payload('transaction', payload, include_original=True)
+    response = proxy_threat('transaction', normalized) or fallback_transaction_analysis(normalized)
+    return _persist_live_analysis(request, normalized, response, analysis_type='threat_transaction', service_name='threat-engine', title='Threat transaction analysis')
 
 
 @app.post('/pilot/threat/analyze/market', summary='Run and persist a market threat analysis for live mode')
 def pilot_threat_analyze_market(payload: dict[str, Any], request: Request) -> dict[str, Any]:
-    response = proxy_threat('market', payload) or fallback_market_analysis(payload)
-    return _persist_live_analysis(request, payload, response, analysis_type='threat_market', service_name='threat-engine', title='Threat market analysis')
+    normalized, _ = normalize_threat_payload('market', payload, include_original=True)
+    response = proxy_threat('market', normalized) or fallback_market_analysis(normalized)
+    return _persist_live_analysis(request, normalized, response, analysis_type='threat_market', service_name='threat-engine', title='Threat market analysis')
 
 
 @app.post('/pilot/compliance/screen/transfer', summary='Run and persist a transfer compliance screen for live mode')
