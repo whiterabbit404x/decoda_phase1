@@ -25,4 +25,4 @@ COPY services/compliance-service/data ./services/compliance-service/data
 COPY services/reconciliation-service/app ./services/reconciliation-service/app
 COPY services/reconciliation-service/data ./services/reconciliation-service/data
 
-CMD ["sh", "-c", "uvicorn services.api.app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "${APP_START_COMMAND:-uvicorn services.api.app.main:app --host 0.0.0.0 --port ${PORT:-8000}}"]

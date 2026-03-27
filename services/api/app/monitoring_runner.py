@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -29,12 +30,16 @@ from services.api.app.threat_payloads import ThreatKind, normalize_threat_payloa
 THREAT_ENGINE_URL = (os.getenv('THREAT_ENGINE_URL') or 'http://localhost:8002').rstrip('/')
 THREAT_ENGINE_TIMEOUT_SECONDS = float(os.getenv('THREAT_ENGINE_TIMEOUT_SECONDS', '1.5'))
 ALERT_DEDUPE_WINDOW_SECONDS = int(os.getenv('MONITORING_ALERT_DEDUPE_WINDOW_SECONDS', '900'))
+WORKER_HEARTBEAT_TTL_SECONDS = int(os.getenv('MONITORING_WORKER_HEARTBEAT_TTL_SECONDS', '180'))
+
+logger = logging.getLogger(__name__)
 
 
 WORKER_STATE: dict[str, Any] = {
     'worker_name': os.getenv('MONITORING_WORKER_NAME', 'monitoring-worker'),
-    'running': False,
+    'worker_running': False,
     'last_cycle_at': None,
+    'last_cycle_due_targets': 0,
     'last_cycle_targets_checked': 0,
     'last_cycle_alerts_generated': 0,
     'last_error': None,
@@ -318,6 +323,7 @@ def process_monitoring_target(connection: Any, target: dict[str, Any], *, trigge
             )
             alerts_generated += 1
             last_alert_at = utc_now()
+            logger.info('created alert %s for target %s (%s)', alert_id, target['id'], target.get('name') or 'unknown')
             _maybe_create_incident(
                 connection,
                 workspace_id=str(target['workspace_id']),
@@ -345,6 +351,7 @@ def process_monitoring_target(connection: Any, target: dict[str, Any], *, trigge
         ''',
         (last_status, last_run_id, last_alert_at, checkpoint_at, checkpoint_cursor, target['id']),
     )
+    logger.info('checked target %s %s status=%s runs=%s alerts=%s', target['id'], target.get('name') or 'unknown', last_status, len(run_ids), alerts_generated)
     return {'target_id': str(target['id']), 'monitoring_run_id': monitoring_run_id, 'runs': run_ids, 'alerts_generated': alerts_generated, 'status': last_status}
 
 
@@ -353,16 +360,27 @@ def run_monitoring_cycle(*, worker_name: str = 'monitoring-worker', limit: int =
         return {'checked': 0, 'alerts_generated': 0, 'runs': [], 'live_mode': False}
 
     checked = 0
+    due_count = 0
     alerts_generated = 0
     runs: list[dict[str, Any]] = []
     error_message: str | None = None
+    cycle_started_at = utc_now()
+    logger.info('monitoring cycle started worker=%s limit=%s', worker_name, limit)
     with pg_connection() as connection:
         ensure_pilot_schema(connection)
-        now = utc_now()
         connection.execute(
             '''
-            INSERT INTO monitoring_worker_state (worker_name, running, last_cycle_at, last_cycle_targets_checked, last_cycle_alerts_generated, last_error, updated_at)
-            VALUES (%s, TRUE, NOW(), 0, 0, NULL, NOW())
+            INSERT INTO monitoring_worker_state (
+                worker_name,
+                running,
+                last_cycle_at,
+                last_cycle_due_targets,
+                last_cycle_targets_checked,
+                last_cycle_alerts_generated,
+                last_error,
+                updated_at
+            )
+            VALUES (%s, TRUE, NOW(), 0, 0, 0, NULL, NOW())
             ON CONFLICT (worker_name)
             DO UPDATE SET running = TRUE, last_cycle_at = NOW(), last_error = NULL, updated_at = NOW()
             ''',
@@ -386,16 +404,20 @@ def run_monitoring_cycle(*, worker_name: str = 'monitoring-worker', limit: int =
             ''',
             (max(1, min(limit, 200)),),
         ).fetchall()
+        due_count = len(due_targets)
+        logger.info('due targets: %s', due_count)
         for row in due_targets:
             target = dict(row)
-            connection.execute('UPDATE targets SET monitoring_claimed_by = %s, monitoring_claimed_at = NOW() WHERE id = %s', (worker_name, target['id']))
-            checked += 1
             try:
-                result = process_monitoring_target(connection, target)
+                with connection.transaction():
+                    connection.execute('UPDATE targets SET monitoring_claimed_by = %s, monitoring_claimed_at = NOW() WHERE id = %s', (worker_name, target['id']))
+                    result = process_monitoring_target(connection, target)
                 alerts_generated += int(result['alerts_generated'])
                 runs.append(result)
+                checked += 1
             except Exception as exc:
                 error_message = str(exc)
+                logger.exception('monitoring target failed target=%s name=%s', target.get('id'), target.get('name'))
                 connection.execute(
                     'UPDATE targets SET last_checked_at = NOW(), last_run_status = %s, monitoring_claimed_by = NULL, monitoring_claimed_at = NULL WHERE id = %s',
                     ('error', target['id']),
@@ -404,27 +426,30 @@ def run_monitoring_cycle(*, worker_name: str = 'monitoring-worker', limit: int =
             '''
             UPDATE monitoring_worker_state
             SET running = FALSE,
-                last_cycle_at = %s,
+                last_cycle_at = NOW(),
+                last_cycle_due_targets = %s,
                 last_cycle_targets_checked = %s,
                 last_cycle_alerts_generated = %s,
                 last_error = %s,
                 updated_at = NOW()
             WHERE worker_name = %s
             ''',
-            (now, checked, alerts_generated, error_message, worker_name),
+            (due_count, checked, alerts_generated, error_message, worker_name),
         )
         connection.commit()
     WORKER_STATE.update(
         {
             'worker_name': worker_name,
-            'running': False,
-            'last_cycle_at': utc_now().isoformat(),
+            'worker_running': False,
+            'last_cycle_at': cycle_started_at.isoformat(),
+            'last_cycle_due_targets': due_count,
             'last_cycle_targets_checked': checked,
             'last_cycle_alerts_generated': alerts_generated,
             'last_error': error_message,
         }
     )
-    return {'checked': checked, 'alerts_generated': alerts_generated, 'runs': runs, 'live_mode': True}
+    logger.info('monitoring cycle finished worker=%s due=%s checked=%s alerts=%s', worker_name, due_count, checked, alerts_generated)
+    return {'due_targets': due_count, 'checked': checked, 'alerts_generated': alerts_generated, 'runs': runs, 'live_mode': True}
 
 
 def list_monitoring_targets(request: Request) -> dict[str, Any]:
@@ -570,7 +595,23 @@ def get_monitoring_health() -> dict[str, Any]:
     with pg_connection() as connection:
         ensure_pilot_schema(connection)
         worker_name = WORKER_STATE['worker_name']
-        row = connection.execute('SELECT worker_name, running, last_cycle_at, last_cycle_targets_checked, last_cycle_alerts_generated, last_error, updated_at FROM monitoring_worker_state WHERE worker_name = %s', (worker_name,)).fetchone()
+        row = connection.execute(
+            '''
+            SELECT worker_name, running, last_cycle_at, last_cycle_due_targets,
+                   last_cycle_targets_checked, last_cycle_alerts_generated, last_error, updated_at
+            FROM monitoring_worker_state
+            WHERE worker_name = %s
+            ''',
+            (worker_name,),
+        ).fetchone()
         if row is None:
             return {**WORKER_STATE, 'live_mode': True}
-        return {**_json_safe_value(dict(row)), 'live_mode': True}
+        normalized = _json_safe_value(dict(row))
+        last_cycle_at = _parse_ts(normalized.get('last_cycle_at'))
+        worker_running = bool(normalized.get('running'))
+        if last_cycle_at is not None:
+            worker_running = worker_running or (utc_now() - last_cycle_at) <= timedelta(seconds=max(30, WORKER_HEARTBEAT_TTL_SECONDS))
+        normalized['worker_running'] = worker_running
+        normalized['last_cycle_checked_targets'] = normalized.get('last_cycle_targets_checked', 0)
+        normalized['last_cycle_alerts_created'] = normalized.get('last_cycle_alerts_generated', 0)
+        return {**normalized, 'live_mode': True}

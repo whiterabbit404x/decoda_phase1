@@ -1,0 +1,2 @@
+web: uvicorn services.api.app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+monitoring-worker: python -m services.api.app.run_monitoring_worker

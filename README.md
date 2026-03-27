@@ -64,13 +64,23 @@ The pilot demo seed creates a workspace-scoped demo account in Postgres while pr
 
 ### Railway deploy / update flow
 
-1. Keep deploying `services/api/Dockerfile` on Railway.
-2. Keep the Docker build context at the repo root so `services/api/Dockerfile` can `COPY` sibling fixture folders such as `services/risk-engine/data` and `services/reconciliation-service/data`.
-3. After each deploy, verify the running container via `GET /health/details` or the startup log line that now prints the runtime version marker plus fixture-path existence checks.
-4. Set Railway env vars from `services/api/.env.example`.
+Run **two Railway services** from this monorepo for production monitoring:
+
+1. Create `decoda-api` service:
+   - Dockerfile path: `services/api/Dockerfile`
+   - Root/build context: repository root
+   - `APP_START_COMMAND` (optional, default): `uvicorn services.api.app.main:app --host 0.0.0.0 --port ${PORT:-8000}`
+2. Create `decoda-monitoring-worker` service from the same repo:
+   - Dockerfile path: `services/api/Dockerfile`
+   - Root/build context: repository root
+   - Start command env override:
+     - `APP_START_COMMAND=python -m services.api.app.run_monitoring_worker --worker-name railway-monitoring-worker --interval-seconds 15 --limit 50`
+3. Keep the Docker build context at the repo root so `services/api/Dockerfile` can `COPY` sibling fixture folders such as `services/risk-engine/data` and `services/reconciliation-service/data`.
+4. Set Railway env vars from `services/api/.env.example` on **both** services, including monitoring worker vars (`MONITORING_WORKER_NAME`, `MONITORING_WORKER_INTERVAL_SECONDS`, `MONITORING_WORKER_LIMIT`, optional `MONITORING_WORKER_HEARTBEAT_TTL_SECONDS`).
 5. Run migrations against Neon with `python services/api/scripts/migrate.py` in Railway's shell or a one-off command using the same image/env.
 6. Optionally run `python services/api/scripts/seed.py --pilot-demo` once for a demo tenant.
-7. Keep the Railway start command binding to `0.0.0.0:$PORT` (already handled by the Dockerfile).
+7. Verify worker heartbeat via `GET /ops/monitoring/health` on the API service.
+8. For manual one-shot verification in Railway shell, run `python -m services.api.app.run_monitoring_worker --once` (or `python services/api/scripts/run_monitoring_worker.py --once`).
 
 ### Vercel setup flow
 
@@ -151,6 +161,18 @@ For operator-triggered one-shot execution from the API service:
 
 ```bash
 curl -X POST "$API_URL/ops/jobs/run" -H "Content-Type: application/json" -d '{"worker_id":"ops","limit":25}'
+```
+
+Run the dedicated threat monitoring worker process in production:
+
+```bash
+python -m services.api.app.run_monitoring_worker --worker-name railway-monitoring-worker --interval-seconds 15 --limit 50
+```
+
+One-shot diagnostic cycle (safe to run manually in Railway shell):
+
+```bash
+python -m services.api.app.run_monitoring_worker --once --worker-name railway-monitoring-worker --limit 50
 ```
 
 ### Honest remaining gaps before true GA / enterprise claims
